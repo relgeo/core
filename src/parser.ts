@@ -1,0 +1,233 @@
+import { load } from "js-yaml";
+import type { RelGeoDocument, RelGeoMode, RelGeoObject } from "./types";
+import { Validator, ValidationError } from "./validator";
+
+export const ACTIVE_REL_GEO_SPEC_VERSION = "0.5";
+
+export class ParseError extends Error {
+  path?: string;
+  code?: string;
+
+  constructor(message: string, path?: string, code?: string) {
+    super(message);
+    this.path = path;
+    this.code = code;
+    this.name = "ParseError";
+  }
+}
+
+const TOP_LEVEL_FIELDS = new Set([
+  "version",
+  "scene",
+  "parameters",
+  "constants",
+  "derived",
+  "profiles",
+  "metaPresets",
+  "styles",
+  "components",
+  "objects",
+  "constraints",
+  "meta",
+  "sheets",
+  "views",
+]);
+
+const COMMON_OBJECT_FIELDS = new Set(["id", "type", "meta", "metaPreset", "style", "anchors"]);
+const OBJECT_FIELDS: Record<string, Set<string>> = {
+  point: new Set(["at", "from", "move", "on"]),
+  line: new Set(["from", "to", "direction", "length", "tangent"]),
+  rect: new Set(["size", "place", "on", "holes", "transform"]),
+  circle: new Set(["center", "radius", "through", "place", "on", "holes", "transform"]),
+  ellipse: new Set(["center", "rx", "ry", "size", "rotation", "place", "on", "holes", "transform"]),
+  group: new Set(["children", "place", "on", "transform"]),
+  text: new Set(["at", "place", "on", "transform", "content", "anchor"]),
+  path: new Set(["points", "segments", "join", "closed", "closeWith", "offset", "corners", "corner", "place", "on", "holes", "transform"]),
+  polygon: new Set(["points", "corners", "corner", "place", "on", "holes", "transform"]),
+  clone: new Set(["of", "place", "on", "transform"]),
+  translate: new Set(["target", "by"]),
+  rotate: new Set(["target", "angle", "origin"]),
+  scale: new Set(["target", "factor", "origin"]),
+  mirror: new Set(["target", "axis", "origin"]),
+  reverse: new Set(["target"]),
+  split: new Set(["target", "at", "pick"]),
+  arc: new Set(["from", "through", "to", "center", "radius", "startAngle", "endAngle", "place", "on", "transform"]),
+  cubic: new Set(["from", "cp1", "cp2", "to", "place", "on", "transform"]),
+  quadratic: new Set(["from", "cp", "to", "place", "on", "transform"]),
+  repeat: new Set(["count", "grid", "polar", "each", "along", "item", "place", "transform"]),
+  divide: new Set(["target", "count"]),
+  collection: new Set(["children"]),
+  component: new Set(["use", "params", "place", "on", "transform"]),
+  dimension: new Set(["kind", "from", "to", "offset", "target", "between", "text"]),
+  annotation: new Set(["target", "text", "leader", "place"]),
+  boolean: new Set(["operation", "shapes", "base", "tools", "result", "place", "on", "transform"]),
+};
+
+export interface ParseOptions {
+  strict?: boolean;
+  mode?: RelGeoMode;
+}
+
+/**
+ * Tolerant parser for editor/playground use cases.
+ */
+export function parseForEditor(yaml: string): RelGeoDocument {
+  return parseRelGeo(yaml, { mode: "editor" });
+}
+
+function normalizeHolesInObjects(objects: any) {
+  if (objects && typeof objects === "object") {
+    for (const id in objects) {
+      const obj = objects[id];
+      if (obj && typeof obj === "object" && Array.isArray(obj.holes)) {
+        obj.holes = obj.holes.map((hole: any) => {
+          if (hole && typeof hole === "object" && !Array.isArray(hole)) {
+            const keys = Object.keys(hole);
+            if (keys.length === 1) {
+              const type = keys[0];
+              const val = hole[type];
+              const KNOWN_HOLE_TYPES = new Set(["circle", "rect", "polygon", "path", "segments", "clone"]);
+              if (KNOWN_HOLE_TYPES.has(type)) {
+                if (type === "segments") {
+                  if (Array.isArray(val)) {
+                    return { segments: val };
+                  }
+                  if (val && typeof val === "object") {
+                    return val;
+                  }
+                } else if (val && typeof val === "object" && !Array.isArray(val)) {
+                  return { type, ...val };
+                }
+              }
+            }
+          }
+          return hole;
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Parses a RelGeo YAML string into a RelGeoDocument.
+ * parseRelGeo() is strict by default.
+ * Use parseForEditor() for tolerant playground/editor parsing.
+ */
+export function parseRelGeo(
+  yaml: string,
+  options: ParseOptions = {}
+): RelGeoDocument & { objects: Record<string, RelGeoObject> } {
+  const mode = options.mode || "validate"; // Default to validate for safety
+
+  let doc: any;
+  try {
+    doc = load(yaml);
+  } catch (e: any) {
+    throw new ParseError(`YAML Parse Error: ${e.message}`);
+  }
+
+  if (!doc || typeof doc !== "object") {
+    throw new ParseError("Invalid document structure: root must be an object");
+  }
+
+  // 1. Validate / Default Version
+  if (doc.version === undefined) {
+    doc.version = ACTIVE_REL_GEO_SPEC_VERSION;
+  }
+  if (typeof doc.version !== "number" && typeof doc.version !== "string") {
+    throw new ParseError("Field 'version' must be a number or string", "version");
+  }
+
+  // 2. Validate Top-Level Fields
+  for (const key of Object.keys(doc)) {
+    if (!TOP_LEVEL_FIELDS.has(key)) {
+      throw new ParseError(`Unknown top-level field: ${key}`, key);
+    }
+  }
+
+  // 3. Validate / Default Objects
+  if (doc.objects === undefined) {
+    doc.objects = {};
+  }
+  if (typeof doc.objects !== "object" || Array.isArray(doc.objects)) {
+    throw new ParseError("Invalid field: objects must be an object", "objects");
+  }
+
+  // 4. Normalize Parameter Shorthand (Optional, but good for UX)
+  if (doc.parameters && typeof doc.parameters === "object") {
+    for (const key in doc.parameters) {
+      const val = doc.parameters[key];
+      if (typeof val === "number" || typeof val === "string") {
+        let paramType = "number";
+        if (typeof val === "string") {
+          if (/(?:deg|rad)$/i.test(val)) {
+            paramType = "angle";
+          } else if (/%$/.test(val)) {
+            paramType = "percent";
+          } else if (/[a-z]+$/i.test(val)) {
+            paramType = "length";
+          }
+        }
+        doc.parameters[key] = { 
+          type: paramType, 
+          default: val 
+        };
+      }
+    }
+  }
+
+  // Normalize single-key polymorphic hole dictionary representations to standard type-objects
+  normalizeHolesInObjects(doc.objects);
+  if (doc.components && typeof doc.components === "object") {
+    for (const compName in doc.components) {
+      const comp = doc.components[compName];
+      if (comp && typeof comp === "object") {
+        normalizeHolesInObjects(comp.objects);
+      }
+    }
+  }
+
+  // 5. Inject IDs into objects and validate basic types
+  for (const id in doc.objects) {
+    const obj = doc.objects[id];
+    if (!obj.type) {
+      throw new ParseError(`Object "${id}" is missing required field: type`, `objects.${id}`);
+    }
+    if (!OBJECT_FIELDS[obj.type]) {
+      throw new ParseError(`Invalid object type: ${obj.type}`, `objects.${id}.type`);
+    }
+
+    const allowedFields = new Set([...COMMON_OBJECT_FIELDS, ...OBJECT_FIELDS[obj.type]]);
+    for (const field of Object.keys(obj)) {
+      if (!allowedFields.has(field)) {
+        throw new ParseError(`Unknown field "${field}" on object "${id}"`, `objects.${id}.${field}`);
+      }
+    }
+
+    if (mode !== "editor") {
+      if (obj.type === "rect" && (!Array.isArray(obj.size) || obj.size.length !== 2)) {
+        throw new ParseError(`rect "${id}" requires size: [width, height]`, `objects.${id}.size`, "MISSING_REQUIRED_FIELD");
+      }
+      if (obj.type === "polygon" && (!Array.isArray(obj.points) || obj.points.length < 3)) {
+        throw new ParseError(`polygon "${id}" requires at least 3 points`, `objects.${id}.points`, "MISSING_REQUIRED_FIELD");
+      }
+    }
+
+    obj.id = id;
+  }
+
+  // 6. Semantic Validation
+  if (mode !== "editor") {
+    try {
+      const validator = new Validator(doc as RelGeoDocument, mode);
+      validator.validate();
+    } catch (error: any) {
+      if (error instanceof ValidationError) {
+        throw new ParseError(error.message, error.path, error.code);
+      }
+      throw error;
+    }
+  }
+
+  return doc as RelGeoDocument & { objects: Record<string, RelGeoObject> };
+}

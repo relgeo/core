@@ -1,0 +1,42 @@
+import { ResolvedClone, CloneObject } from "../../types";
+import { ResolveContext } from "../types";
+import { calculateBoundingBox } from "../geometry-utils";
+import { wrapError, resolveCustomAnchors, applyObjectPlacementAndTransform } from "./utils";
+
+export function resolveClone(
+    id: string, 
+    obj: CloneObject, 
+    ctx: ResolveContext
+): ResolvedClone {
+    const targetId = obj.of;
+    const target = ctx.objects[targetId];
+
+    if (!target) {
+        throw new Error(`Clone target "${targetId}" not found or not yet resolved.`);
+    }
+
+    // A clone is a virtual group containing the target.
+    // In v0.2, the clone acts as the parent of the target in a virtual hierarchy.
+    const childObjects: Record<string, any> = { [targetId]: target };
+    const bbox = calculateBoundingBox(childObjects);
+
+    const { resolvedTransform, dx, dy } = applyObjectPlacementAndTransform(obj, bbox, ctx);
+
+    // For clones, we must add the translate to the pipeline since they don't have x, y
+    const finalTransform = resolvedTransform || [];
+    if (dx !== 0 || dy !== 0) {
+        finalTransform.unshift({ type: "translate", x: dx, y: dy });
+    }
+
+    const resolved: ResolvedClone = {
+        id,
+        type: "clone",
+        of: targetId,
+        children: [targetId], // Virtual child
+        transform: finalTransform.length > 0 ? finalTransform : undefined,
+        meta: obj.meta,
+    };
+
+    resolved.anchors = resolveCustomAnchors(obj, resolved, ctx, bbox);
+    return resolved;
+}

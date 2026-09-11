@@ -1,0 +1,106 @@
+import { describe, expect, it } from "vitest";
+import { parseRelGeo, resolveGeometry, Validator } from "..";
+
+describe("split object", () => {
+  it("parses split objects in the active syntax surface", () => {
+    const doc = parseRelGeo(`
+version: 0.5
+objects:
+  A: { type: point, at: [0, 0] }
+  B: { type: point, at: [10, 0] }
+  cut:
+    type: split
+    target: edge
+    at: [4, 0]
+  edge:
+    type: line
+    from: A
+    to: B
+`);
+
+    expect(doc.objects.cut.type).toBe("split");
+  });
+
+  it("validates pick as first/last only", () => {
+    const doc = {
+      version: 0.5,
+      objects: {
+        A: { type: "point", at: [0, 0] },
+        B: { type: "point", at: [10, 0] },
+        edge: { type: "line", from: "A", to: "B" },
+        cut: { type: "split", target: "edge", at: [4, 0], pick: "middle" as any },
+      },
+    } as any;
+
+    expect(() => new Validator(doc, "validate").validate()).toThrow("INVALID_VALUE");
+  });
+
+  it("resolves split without pick as a collection of two path pieces", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      objects: {
+        A: { type: "point", at: [0, 0] },
+        B: { type: "point", at: [10, 0] },
+        edge: { type: "line", from: "A", to: "B" },
+        cut: { type: "split", target: "edge", at: [4, 0] },
+      },
+    } as any);
+
+    const cut = resolved.objects.cut as any;
+    expect(cut.type).toBe("collection");
+    expect(cut.children).toEqual(["cut[0]", "cut[1]"]);
+    expect((resolved.objects["cut[0]"] as any).type).toBe("path");
+    expect((resolved.objects["cut[1]"] as any).type).toBe("path");
+    expect((resolved.objects["cut[0]"] as any).segments[0]).toMatchObject({ x1: 0, y1: 0, x2: 4, y2: 0 });
+    expect((resolved.objects["cut[1]"] as any).segments[0]).toMatchObject({ x1: 4, y1: 0, x2: 10, y2: 0 });
+  });
+
+  it("resolves split with pick as a single path result", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      objects: {
+        A: { type: "point", at: [0, 0] },
+        B: { type: "point", at: [10, 0] },
+        edge: { type: "line", from: "A", to: "B" },
+        head: { type: "split", target: "edge", at: [4, 0], pick: "first" },
+      },
+    } as any);
+
+    const head = resolved.objects.head as any;
+    expect(head.type).toBe("path");
+    expect(head.segments[0]).toMatchObject({ x1: 0, y1: 0, x2: 4, y2: 0 });
+  });
+
+  it("supports first() and last() on default split collection", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      derived: {
+        midX: "pointAt(first(cut), 1).x",
+        tailStartX: "pointAt(last(cut), 0).x",
+      },
+      objects: {
+        A: { type: "point", at: [0, 0] },
+        B: { type: "point", at: [10, 0] },
+        edge: { type: "line", from: "A", to: "B" },
+        cut: { type: "split", target: "edge", at: [4, 0] },
+      },
+    } as any);
+
+    expect((resolved.values as any).midX).toBeCloseTo(4);
+    expect((resolved.values as any).tailStartX).toBeCloseTo(4);
+  });
+
+  it("rejects split at line start as DEGENERATE_SPLIT", () => {
+    expect(() =>
+      resolveGeometry({
+        version: 0.5,
+        objects: {
+          A: { type: "point", at: [0, 0] },
+          B: { type: "point", at: [10, 0] },
+          edge: { type: "line", from: "A", to: "B" },
+          cut: { type: "split", target: "edge", at: [0, 0] },
+        },
+      } as any)
+    ).toThrow("DEGENERATE_SPLIT");
+  });
+});
