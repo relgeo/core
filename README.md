@@ -9,8 +9,8 @@ Metadata package `@relgeo/core` saat ini adalah `0.5.0`, pada compatibility line
 Status packaging saat ini:
 
 * package ini adalah library surface utama untuk runtime RelGeo
-* jalur konsumsi yang paling sehat saat ini masih melalui monorepo workspace
-* surface registry mandiri sebaiknya diperlakukan sebagai langkah packaging terpisah
+* package publik tersedia melalui npm sebagai `@relgeo/core`
+* workspace root tetap dipakai untuk integrasi dan verifikasi lintas-repo
 
 Pakai package ini jika Anda ingin:
 
