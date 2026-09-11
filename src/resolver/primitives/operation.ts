@@ -9,7 +9,7 @@ import type {
     TranslateObject,
 } from "../../types";
 import { evaluateExpression } from "../../evaluator";
-import { splitPathLikeByPoint, type SplitSupportedTarget, type Point2D } from "relgeo-geometry";
+import { splitPathLikeByPoint, type SplitSupportedTarget, type Point2D } from "@relgeo/geometry";
 import { normalizeUnit } from "../../units";
 import { createEvalContext } from "../eval-context";
 import { resolveAnchorValue } from "../anchors";

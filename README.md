@@ -4,7 +4,7 @@ Core engine untuk RelGeo: sebuah **relation-first geometry runtime** untuk gamba
 
 Kontrak bahasa yang dirujuk package ini adalah `RelGeo DSL v0.5`, yang disajikan melalui website pada `/docs/language-spec/`.
 
-Metadata package `relgeo-core` saat ini adalah `0.4.0`. Versi package ini terpisah dari versi kontrak DSL `v0.5` dan tidak menyatakan bahwa package telah dipublish sebagai release publik.
+Metadata package `@relgeo/core` saat ini adalah `0.5.0`, pada compatibility line RelGeo DSL `v0.5`. Patch release dapat bergerak mandiri; perubahan kontrak bahasa akan dinaikkan bersama ke line berikutnya.
 
 Status packaging saat ini:
 
@@ -20,11 +20,11 @@ Pakai package ini jika Anda ingin:
 
 Jika yang Anda butuhkan berbeda:
 
-* gunakan `relgeo-language-service` untuk completion dan diagnostics editor
-* gunakan `relgeo-renderer-svg` untuk output SVG
-* gunakan `relgeo-cli` untuk workflow terminal tanpa integrasi library langsung
+* gunakan `@relgeo/language-service` untuk completion dan diagnostics editor
+* gunakan `@relgeo/renderer-svg` untuk output SVG
+* gunakan `@relgeo/cli` untuk workflow terminal tanpa integrasi library langsung
 
-`relgeo-core` bertanggung jawab untuk:
+`@relgeo/core` bertanggung jawab untuk:
 
 * parsing DSL RelGeo
 * dependency-ordered evaluation
@@ -106,7 +106,7 @@ flowchart TD
     --> C[Typed Geometry Runtime]
     --> D[Dependency Graph Resolver]
     --> E[Resolved Geometry Scene]
-    E --> F[relgeo-renderer-svg]
+    E --> F[@relgeo/renderer-svg]
 ```
 
 ---
@@ -421,7 +421,7 @@ Jika suatu saat package ini dipublikasikan terpisah, surface install-nya tetap d
 Contoh surface install yang diharapkan:
 
 ```bash
-npm install relgeo-core
+npm install @relgeo/core
 ```
 
 ---
@@ -433,7 +433,7 @@ import {
   parseRelGeo,
   resolveGeometry,
   renderToSVG,
-} from 'relgeo-core';
+} from '@relgeo/core';
 
 const source = `
 objects:
@@ -525,9 +525,9 @@ Pemisahan ini menjaga agar:
 
 # Relationship with Other Packages
 
-* `relgeo-core` → typed geometry runtime
-* `relgeo-language-service` → editor intelligence layer
-* `relgeo-cli` → command line tooling
+* `@relgeo/core` → typed geometry runtime
+* `@relgeo/language-service` → editor intelligence layer
+* `@relgeo/cli` → command line tooling
 * `relgeo-playground` → lightweight browser IDE
 * `relgeo_flutter` → richer local workbench
 

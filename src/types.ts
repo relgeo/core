@@ -3,9 +3,9 @@ import type {
   Orientation,
   Origin,
   Meta,
-} from "relgeo-geometry";
+} from "@relgeo/geometry";
 
-export * from "relgeo-geometry";
+export * from "@relgeo/geometry";
 export type RelGeoMode = "editor" | "validate" | "compile";
 
 export type ExpressionValue = string | number;

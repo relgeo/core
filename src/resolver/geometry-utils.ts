@@ -1,1 +1,1 @@
-export * from "relgeo-geometry";
+export * from "@relgeo/geometry";

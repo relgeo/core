@@ -1,6 +1,6 @@
 {
-  "name": "relgeo-core",
-  "version": "0.4.0",
+  "name": "@relgeo/core",
+  "version": "0.5.0",
   "description": "Relation-first parametric geometry engine",
   "homepage": "https://relgeo.github.io/",
   "repository": {
@@ -36,14 +36,18 @@
   ],
   "author": "Agus Made",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "packageManager": "pnpm@10.33.3",
   "dependencies": {
     "js-yaml": "^4.1.1",
-    "relgeo-geometry": "^0.4.0"
+    "@relgeo/geometry": "^0.5.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "relgeo-renderer-svg": "^0.4.0",
+    "@relgeo/renderer-svg": "^0.5.0",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",
     "vitest": "^4.1.5"

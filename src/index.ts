@@ -5,4 +5,4 @@ export * from "./evaluator";
 export * from "./resolver";
 export * from "./validator";
 export * from "./graph";
-export * from "relgeo-geometry";
+export * from "@relgeo/geometry";

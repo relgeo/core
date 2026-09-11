@@ -31,7 +31,7 @@ import {
     normalizeClosedShape,
     polyToSegments,
     PolyWithHoles
-} from "relgeo-geometry";
+} from "@relgeo/geometry";
 import { normalizeUnit } from "../../units";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";

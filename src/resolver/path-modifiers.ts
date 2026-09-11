@@ -3,11 +3,11 @@ import {
   offsetPolyline as geomOffsetPolyline,
   validateNoSelfIntersection as geomValidateNoSelfIntersection,
   GeometryError,
-} from "relgeo-geometry";
+} from "@relgeo/geometry";
 import { ResolveError } from "./types";
 
-export type { Point2D, CornerModifiers, PathSegment, OffsetSide } from "relgeo-geometry";
-export { computeFillet, computeChamfer } from "relgeo-geometry";
+export type { Point2D, CornerModifiers, PathSegment, OffsetSide } from "@relgeo/geometry";
+export { computeFillet, computeChamfer } from "@relgeo/geometry";
 
 export function applyCornerModifiers(
   segments: any[],
