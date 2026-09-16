@@ -3,6 +3,34 @@ import type { RelGeoDocument, RelGeoMode, RelGeoObject } from "./types";
 import { Validator, ValidationError } from "./validator";
 
 export const ACTIVE_REL_GEO_SPEC_VERSION = "0.5";
+export const SUPPORTED_REL_GEO_SPEC_VERSIONS = ["0.4", "0.5"] as const;
+export const REGRESSION_ONLY_REL_GEO_SPEC_VERSIONS = ["0.1", "0.2", "0.3"] as const;
+export const ACCEPTED_REL_GEO_SPEC_VERSIONS = [
+  ...REGRESSION_ONLY_REL_GEO_SPEC_VERSIONS,
+  ...SUPPORTED_REL_GEO_SPEC_VERSIONS,
+] as const;
+
+export type RelGeoSpecVersionStatus =
+  | "active"
+  | "supported-legacy"
+  | "regression-only"
+  | "unsupported";
+
+export function normalizeRelGeoSpecVersion(version: string | number): string {
+  return String(version).trim();
+}
+
+export function classifyRelGeoSpecVersion(version: string | number): RelGeoSpecVersionStatus {
+  const normalized = normalizeRelGeoSpecVersion(version);
+  if (normalized === ACTIVE_REL_GEO_SPEC_VERSION) return "active";
+  if (SUPPORTED_REL_GEO_SPEC_VERSIONS.includes(normalized as (typeof SUPPORTED_REL_GEO_SPEC_VERSIONS)[number])) {
+    return "supported-legacy";
+  }
+  if (REGRESSION_ONLY_REL_GEO_SPEC_VERSIONS.includes(normalized as (typeof REGRESSION_ONLY_REL_GEO_SPEC_VERSIONS)[number])) {
+    return "regression-only";
+  }
+  return "unsupported";
+}
 
 export class ParseError extends Error {
   path?: string;
@@ -136,6 +164,13 @@ export function parseRelGeo(
   }
   if (typeof doc.version !== "number" && typeof doc.version !== "string") {
     throw new ParseError("Field 'version' must be a number or string", "version");
+  }
+  if (classifyRelGeoSpecVersion(doc.version) === "unsupported") {
+    throw new ParseError(
+      `Unsupported RelGeo DSL version "${normalizeRelGeoSpecVersion(doc.version)}". Supported public versions: ${SUPPORTED_REL_GEO_SPEC_VERSIONS.join(", ")}; regression-only versions: ${REGRESSION_ONLY_REL_GEO_SPEC_VERSIONS.join(", ")}.`,
+      "version",
+      "UNSUPPORTED_SPEC_VERSION",
+    );
   }
 
   // 2. Validate Top-Level Fields

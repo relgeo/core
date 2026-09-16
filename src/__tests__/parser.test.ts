@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseRelGeo, ParseError, ACTIVE_REL_GEO_SPEC_VERSION } from "../parser";
+import {
+  parseRelGeo,
+  ParseError,
+  ACTIVE_REL_GEO_SPEC_VERSION,
+  classifyRelGeoSpecVersion,
+} from "../parser";
 
 describe("parser", () => {
   it("should parse a valid simple DSL", () => {
@@ -27,6 +32,29 @@ objects:
     const doc = parseRelGeo(yaml);
     expect(doc.version).toBe(ACTIVE_REL_GEO_SPEC_VERSION);
   });
+
+  it("classifies active, supported legacy, and regression-only versions explicitly", () => {
+    expect(classifyRelGeoSpecVersion("0.5")).toBe("active");
+    expect(classifyRelGeoSpecVersion(0.4)).toBe("supported-legacy");
+    expect(classifyRelGeoSpecVersion("0.2")).toBe("regression-only");
+  });
+
+  it.each(["0.6", "1.0", "0.5.1"])(
+    "rejects unsupported version %s with an actionable parser diagnostic",
+    (version) => {
+      expect(() =>
+        parseRelGeo(`version: "${version}"\nobjects: {}`),
+      ).toThrowError(
+        expect.objectContaining({
+          path: "version",
+          code: "UNSUPPORTED_SPEC_VERSION",
+        }),
+      );
+      expect(() =>
+        parseRelGeo(`version: "${version}"\nobjects: {}`),
+      ).toThrow(`Unsupported RelGeo DSL version "${version}"`);
+    },
+  );
 
   it("should default missing objects to an empty object", () => {
     const yaml = `
