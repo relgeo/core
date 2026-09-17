@@ -1,11 +1,11 @@
 {
   "name": "@relgeo/core",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Relation-first parametric geometry engine",
   "homepage": "https://relgeo.github.io/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/relgeo/core.git"
+    "url": "git+https://github.com/relgeo/core.git"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
