@@ -1,4 +1,4 @@
-import type { RelGeoDocument, RelGeoErrorCode, RelGeoError, RelGeoMode } from "./types";
+import type { RelGeoDocument, RelGeoErrorCode, RelGeoError, RelGeoMode, SourceRange } from "./types";
 import { validateExpressionSyntax, evaluateExpression } from "./evaluator";
 import { PLACE_FIELDS } from "./constants";
 
@@ -78,16 +78,22 @@ const OBJECT_ANCHORS: Record<string, Set<string>> = {
 };
 
 export class ValidationError extends Error implements RelGeoError {
+  phase = "validate" as const;
+  severity = "error" as const;
+  range?: SourceRange;
+
   constructor(
     message: string,
     public path?: string,
     public code?: RelGeoErrorCode | string,
-    public objectId?: string
+    public objectId?: string,
+    range?: SourceRange
   ) {
     const fullMessage = code ? `${code}: ${message}` : message;
     super(fullMessage);
     this.message = fullMessage;
     this.name = "ValidationError";
+    this.range = range;
   }
 }
 
@@ -108,6 +114,25 @@ export class Validator {
   }
 
   validate(): void {
+    try {
+      this.validateInternal();
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+
+      const candidate = (error && typeof error === "object" ? error : {}) as {
+        code?: string;
+        path?: string;
+        objectId?: string;
+      };
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const prefix = rawMessage.match(/^([A-Z][A-Z0-9_]*):\s*/)?.[1];
+      const code = candidate.code ?? prefix ?? "INVALID_EXPRESSION";
+      const message = prefix ? rawMessage.replace(/^([A-Z][A-Z0-9_]*):\s*/, "") : rawMessage;
+      throw new ValidationError(message, candidate.path, code, candidate.objectId);
+    }
+  }
+
+  private validateInternal(): void {
     this.validateIdentifiers();
     this.validateParameters();
     this.validateExpressions();

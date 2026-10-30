@@ -13,8 +13,10 @@ import { Validator } from "../validator";
 import { parseRelGeo } from "../parser";
 import { evaluateExpression } from "../evaluator";
 import { createEvalContext } from "./eval-context";
+import { normalizeResolveError } from "../errors";
 
 export type { ResolveOptions, ResolveContext } from "./types";
+export { ResolveError } from "./types";
 export { resolveValues } from "./values";
 export { parseForEditor } from "../parser";
 export { calculateBoundingBox } from "./geometry-utils";
@@ -32,6 +34,17 @@ export function compileRelGeo(
 }
 
 export function resolveGeometry(
+    doc: RelGeoDocument,
+    options: ResolveOptions = {}
+): ResolvedScene {
+    try {
+        return resolveGeometryInternal(doc, options);
+    } catch (error) {
+        throw normalizeResolveError(error);
+    }
+}
+
+function resolveGeometryInternal(
     doc: RelGeoDocument,
     options: ResolveOptions = {}
 ): ResolvedScene {
@@ -97,11 +110,16 @@ export function resolveGeometry(
         for (const node of unifiedOrder) {
             if (node.kind === "object") {
                 const obj = docObjects[node.id];
-                const resolved = resolveObject(node.id, obj, {
-                    ...ctx,
-                    objects: resolvedMap,
-                    currentObjectId: node.id
-                });
+                let resolved;
+                try {
+                    resolved = resolveObject(node.id, obj, {
+                        ...ctx,
+                        objects: resolvedMap,
+                        currentObjectId: node.id
+                    });
+                } catch (error) {
+                    throw normalizeResolveError(error, node.id, `objects.${node.id}`);
+                }
                 if (resolved !== undefined) {
                     resolvedMap[node.id] = resolved;
                 }
@@ -118,11 +136,16 @@ export function resolveGeometry(
         const sortedIds = sortObjects(docObjects, { ...doc, objects: docObjects });
         for (const id of sortedIds) {
             const obj = docObjects[id];
-            const resolved = resolveObject(id, obj, {
-                ...ctx,
-                objects: resolvedMap,
-                currentObjectId: id
-            });
+            let resolved;
+            try {
+                resolved = resolveObject(id, obj, {
+                    ...ctx,
+                    objects: resolvedMap,
+                    currentObjectId: id
+                });
+            } catch (error) {
+                throw normalizeResolveError(error, id, `objects.${id}`);
+            }
             if (resolved !== undefined) {
                 resolvedMap[id] = resolved;
             }

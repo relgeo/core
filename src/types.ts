@@ -8,6 +8,21 @@ import type {
 export * from "@relgeo/geometry";
 export type RelGeoMode = "editor" | "validate" | "compile";
 
+/** Zero-based source coordinates used by the public diagnostic boundary. */
+export interface SourcePosition {
+  line: number;
+  column: number;
+}
+
+/** A half-open source range: start is inclusive, end is exclusive. */
+export interface SourceRange {
+  start: SourcePosition;
+  end: SourcePosition;
+}
+
+export type RelGeoDiagnosticPhase = "parse" | "validate" | "resolve" | "runtime" | "constraint";
+export type RelGeoDiagnosticSeverity = "error" | "warning" | "info";
+
 export type ExpressionValue = string | number;
 export type ObjectRef = string;
 export type AnchorRef = string | number | [ExpressionValue, ExpressionValue];
@@ -594,6 +609,9 @@ export interface RelGeoDocument {
 
 
 export type RelGeoErrorCode =
+  | "UNKNOWN_ERROR"
+  | "INVALID_YAML"
+  | "UNSUPPORTED_SPEC_VERSION"
   | "COMPONENT_NOT_FOUND"
   | "UNKNOWN_FIELD"
   | "INVALID_OBJECT_TYPE"
@@ -625,7 +643,23 @@ export type RelGeoErrorCode =
   | "SELF_INTERSECTING_PATH"
   | "INVALID_CORNER_OPERATION"
   | "INVALID_CONSTRAINT"
+  | "INVALID_VALUE"
+  | "INVALID_TYPE"
+  | "INVALID_BOOLEAN_OPERATION"
+  | "BOOLEAN_EMPTY_RESULT"
+  | "BOOLEAN_FAILED"
   | "BOOLEAN_MULTIPART_RESULT"
+  | "HOLE_OUTSIDE_BOUNDARY"
+  | "HOLE_OVERLAP"
+  | "FRAME_RESOLUTION_FAILED"
+  | "PATH_LENGTH_UNAVAILABLE"
+  | "INVALID_T_AT_LENGTH"
+  | "INVALID_COLLECTION_ACCESS"
+  | "INVALID_INHERIT_TARGET"
+  | "INHERIT_TARGET_NOT_FOUND"
+  | "CIRCULAR_INHERIT"
+  | "RESOLVE_ERROR"
+  | "INVALID_RESOLVED_SCENE"
   | "DIMENSION_TARGET_INVALID"
   | "ANNOTATION_TARGET_INVALID"
   | "INVALID_REPEAT_COUNT"
@@ -648,6 +682,16 @@ export interface RelGeoError {
   code?: RelGeoErrorCode | string;
   objectId?: string;
   dependencyChain?: string[];
+  phase?: RelGeoDiagnosticPhase;
+  severity?: RelGeoDiagnosticSeverity;
+  range?: SourceRange;
+}
+
+/** Stable machine-readable diagnostic returned by the aggregation boundary. */
+export interface RelGeoDiagnostic extends RelGeoError {
+  code: RelGeoErrorCode | string;
+  phase: RelGeoDiagnosticPhase;
+  severity: RelGeoDiagnosticSeverity;
 }
 
 export type TextMeasureInput = {

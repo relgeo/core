@@ -1,5 +1,5 @@
 import { load } from "js-yaml";
-import type { RelGeoDocument, RelGeoMode, RelGeoObject } from "./types";
+import type { RelGeoDocument, RelGeoMode, RelGeoObject, SourceRange } from "./types";
 import { Validator, ValidationError } from "./validator";
 
 export const ACTIVE_REL_GEO_SPEC_VERSION = "0.5";
@@ -35,11 +35,15 @@ export function classifyRelGeoSpecVersion(version: string | number): RelGeoSpecV
 export class ParseError extends Error {
   path?: string;
   code?: string;
+  phase = "parse" as const;
+  severity = "error" as const;
+  range?: SourceRange;
 
-  constructor(message: string, path?: string, code?: string) {
+  constructor(message: string, path?: string, code?: string, range?: SourceRange) {
     super(message);
     this.path = path;
     this.code = code;
+    this.range = range;
     this.name = "ParseError";
   }
 }
@@ -151,7 +155,14 @@ export function parseRelGeo(
   try {
     doc = load(yaml);
   } catch (e: any) {
-    throw new ParseError(`YAML Parse Error: ${e.message}`);
+    const mark = e?.mark;
+    const range = mark && typeof mark.line === "number" && typeof mark.column === "number"
+      ? {
+          start: { line: mark.line, column: mark.column },
+          end: { line: mark.line, column: mark.column + 1 },
+        }
+      : undefined;
+    throw new ParseError(`YAML Parse Error: ${e.message}`, undefined, "INVALID_YAML", range);
   }
 
   if (!doc || typeof doc !== "object") {
@@ -260,7 +271,11 @@ export function parseRelGeo(
       if (error instanceof ValidationError) {
         throw new ParseError(error.message, error.path, error.code);
       }
-      throw error;
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const prefix = rawMessage.match(/^([A-Z][A-Z0-9_]*):\s*/)?.[1];
+      const code = error?.code ?? prefix ?? "INVALID_EXPRESSION";
+      const message = prefix ? rawMessage.replace(/^([A-Z][A-Z0-9_]*):\s*/, "") : rawMessage;
+      throw new ParseError(message, error?.path, code);
     }
   }
 

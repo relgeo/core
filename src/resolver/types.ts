@@ -1,4 +1,4 @@
-import type { LengthUnit, RelGeoMode, RelGeoError, RelGeoErrorCode, TextMetricsProvider } from "../types";
+import type { LengthUnit, RelGeoMode, RelGeoError, RelGeoErrorCode, SourceRange, TextMetricsProvider } from "../types";
 
 export interface ResolveOptions {
     profile?: string;
@@ -20,15 +20,21 @@ export interface ResolveContext {
 }
 
 export class ResolveError extends Error implements RelGeoError {
+    phase = "resolve" as const;
+    severity = "error" as const;
+    range?: SourceRange;
+
     constructor(
         message: string,
         public code?: RelGeoErrorCode | string,
         public objectId?: string,
-        public path?: string
+        public path?: string,
+        range?: SourceRange
     ) {
         const fullMessage = code ? `${code}: ${message}` : message;
         super(fullMessage);
         this.message = fullMessage;
         this.name = "ResolveError";
+        this.range = range;
     }
 }

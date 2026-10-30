@@ -34,6 +34,20 @@ Jika yang Anda butuhkan berbeda:
 * coordinate space management
 * resolved scene generation
 
+Public contract helpers:
+
+* `collectDiagnostics(sourceOrDocument)` returns a bounded, deterministic list
+  of parse, validation, resolution, runtime, and constraint diagnostics without
+  changing strict `parseRelGeo` or `resolveGeometry` behavior.
+* `projectResolvedScene(scene)` and `serializeResolvedScene(scene)` expose the
+  versioned renderer-neutral semantic projection. Object/parameter/view/sheet
+  order is explicit, object keys are canonicalized, and finite numbers are
+  normalized for stable consumers and snapshots.
+
+These helpers are core boundary contracts; language-service and renderer
+packages may project or format them, but must not invent incompatible codes or
+semantic scene fields.
+
 RelGeo Core bukan sekadar parser YAML atau helper SVG.
 
 Ia diposisikan sebagai:
