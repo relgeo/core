@@ -1,6 +1,6 @@
 {
   "name": "@relgeo/core",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Relation-first parametric geometry engine",
   "homepage": "https://relgeo.github.io/",
   "repository": {

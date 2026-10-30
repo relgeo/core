@@ -4,7 +4,7 @@ Core engine untuk RelGeo: sebuah **relation-first geometry runtime** untuk gamba
 
 Kontrak bahasa yang dirujuk package ini adalah `RelGeo DSL v0.5`, yang disajikan melalui website pada `/docs/language-spec/`.
 
-Metadata package `@relgeo/core` saat ini adalah `0.5.0`, pada compatibility line RelGeo DSL `v0.5`. Patch release dapat bergerak mandiri; perubahan kontrak bahasa akan dinaikkan bersama ke line berikutnya.
+Metadata package `@relgeo/core` saat ini adalah `0.5.2`, pada compatibility line RelGeo DSL `v0.5`. Patch release dapat bergerak mandiri; perubahan kontrak bahasa akan dinaikkan bersama ke line berikutnya.
 
 Status packaging saat ini:
 
