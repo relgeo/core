@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { evaluateExpression, EvalContext } from "../evaluator";
+import {
+  evaluateExpression,
+  EvalContext,
+  validateExpressionSyntax,
+} from "../evaluator";
 
 describe("evaluator", () => {
   const ctx: EvalContext = {
@@ -51,6 +55,10 @@ describe("evaluator", () => {
 
   it("should throw on division by zero", () => {
     expect(() => evaluateExpression("10 / 0", ctx)).toThrow("Division by zero");
+  });
+
+  it("should syntax-check geometry query divisors without a geometry context", () => {
+    expect(() => validateExpressionSyntax("x / distance(A, B)")).not.toThrow();
   });
 
   it("should reject trailing tokens in malformed expressions", () => {

@@ -474,12 +474,10 @@ export class Evaluator {
           }
           this.pos++; // consume ')'
 
-          if (!this.context.objects) {
-            if (this.options.allowUnknownGeometryObjects) return { type: "number", value: 0 };
-            throw new Error(`Cannot resolve geometry function "${token}" without objects context`);
-          }
-
           // Syntax-check mode: just verify the call is structurally valid, return dummy value
+          // before requiring a geometry context. The validator's syntax-only
+          // pass intentionally has no objects context, but still needs typed,
+          // non-zero numeric placeholders to avoid false division-by-zero errors.
           if (this.options.allowUnknownGeometryObjects) {
             if (token === "frameAt") {
               return {
@@ -508,7 +506,15 @@ export class Evaluator {
             if (token === "midpoint" || token === "polar" || token === "pointAt" || token === "closestPoint" || token === "project" || token === "reflect" || token === "toWorld" || token === "toLocal" || token === "intersection") {
               return { type: "point" as const, value: { x: 0, y: 0 } };
             }
-            return { type: "number", value: 0 };
+            // A syntax-only placeholder must not make otherwise valid expressions
+            // such as `x / distance(A, B)` fail with division by zero. The real
+            // geometry value is unavailable in this pass, so use a neutral,
+            // non-zero scalar for numeric geometry queries.
+            return { type: "number", value: 1 };
+          }
+
+          if (!this.context.objects) {
+            throw new Error(`Cannot resolve geometry function "${token}" without objects context`);
           }
 
           // Helper: look up an object, respecting allowUnknownGeometryObjects flag
