@@ -27,6 +27,14 @@ export interface ResolvedSceneProjection {
   sheets: Record<string, unknown>;
 }
 
+export interface ResolvedSceneReplayComparison {
+  equal: boolean;
+  expected: string;
+  actual: string;
+}
+
+export type SemanticReplayInput = ResolvedScene | ResolvedSceneProjection | string;
+
 const NUMBER_PRECISION = 12;
 
 function normalizeNumber(value: number, path: string): number {
@@ -53,6 +61,28 @@ function canonicalize(value: unknown, path: string): unknown {
 
 function canonicalRecord(value: unknown, path: string): Record<string, unknown> {
   return (canonicalize(value ?? {}, path) ?? {}) as Record<string, unknown>;
+}
+
+function canonicalizeSerializedSnapshot(input: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch (error) {
+    throw new Error(`INVALID_SEMANTIC_SNAPSHOT: expected JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return JSON.stringify(canonicalize(parsed, "snapshot"));
+}
+
+function serializeSemanticReplayInput(input: SemanticReplayInput): string {
+  if (typeof input === "string") return canonicalizeSerializedSnapshot(input);
+  if (
+    input
+    && typeof input === "object"
+    && (input as Partial<ResolvedSceneProjection>).schema === RESOLVED_SCENE_PROJECTION_SCHEMA
+  ) {
+    return JSON.stringify(canonicalize(input, "projection"));
+  }
+  return serializeResolvedScene(input as ResolvedScene);
 }
 
 /**
@@ -95,3 +125,20 @@ export function serializeResolvedScene(scene: ResolvedScene): string {
   return JSON.stringify(projectResolvedScene(scene));
 }
 
+/**
+ * Compare two semantic scene values using the same canonical rules used by
+ * serialization. String inputs may be snapshots produced by another process;
+ * object inputs may be resolved scenes or already-projected snapshots.
+ */
+export function compareResolvedSceneReplay(
+  expected: SemanticReplayInput,
+  actual: SemanticReplayInput,
+): ResolvedSceneReplayComparison {
+  const expectedSnapshot = serializeSemanticReplayInput(expected);
+  const actualSnapshot = serializeSemanticReplayInput(actual);
+  return {
+    equal: expectedSnapshot === actualSnapshot,
+    expected: expectedSnapshot,
+    actual: actualSnapshot,
+  };
+}

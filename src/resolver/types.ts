@@ -23,10 +23,11 @@ export class ResolveError extends Error implements RelGeoError {
     phase = "resolve" as const;
     severity = "error" as const;
     range?: SourceRange;
+    dependencyChain?: string[];
 
     constructor(
         message: string,
-        public code?: RelGeoErrorCode | string,
+        public code?: RelGeoErrorCode,
         public objectId?: string,
         public path?: string,
         range?: SourceRange

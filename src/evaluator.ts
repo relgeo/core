@@ -2,6 +2,7 @@ import type { LengthUnit, ResolvedObject } from "./types";
 import { normalizeUnit } from "./units";
 import { intersectLines, computeIntersections, applySelector, type IntersectionSelector } from "./resolver/intersection";
 import { applyTransformPipeline } from "./resolver/transform-utils";
+import { CoreError, normalizeErrorCode, stripErrorCodePrefix } from "./errors";
 
 export interface EvalContext {
   scalars: Record<string, any>;
@@ -37,6 +38,23 @@ export interface EvalContext {
   getMember?: (value: TypedValue, key: string) => TypedValue | undefined;
   getIndex?: (value: TypedValue, index: any) => TypedValue | undefined;
   callFunction?: (name: string, args: TypedValue[]) => TypedValue | undefined;
+}
+
+function normalizeEvaluatorError(
+  error: unknown,
+  phase: "validate" | "resolve",
+): CoreError {
+  if (error instanceof CoreError && error.phase === phase) return error;
+  const candidate = error && typeof error === "object"
+    ? error as { code?: unknown; path?: string; objectId?: string }
+    : {};
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const code = normalizeErrorCode(candidate.code, rawMessage, "INVALID_EXPRESSION");
+  return new CoreError(stripErrorCodePrefix(rawMessage), code, {
+    phase,
+    path: candidate.path,
+    objectId: candidate.objectId,
+  });
 }
 
 export class Evaluator {
@@ -79,7 +97,7 @@ export class Evaluator {
     return val;
   }
 
-  evaluate(expression: string | number): any {
+  private evaluateInternal(expression: string | number): any {
     if (typeof expression === "number") return expression;
 
     // Tokenize
@@ -96,7 +114,7 @@ export class Evaluator {
     return this.unwrap(result);
   }
 
-  evaluateTyped(expression: string | number): TypedValue {
+  private evaluateTypedInternal(expression: string | number): TypedValue {
     if (typeof expression === "number") {
       return { type: "number", value: expression };
     }
@@ -114,6 +132,22 @@ export class Evaluator {
     }
 
     return result;
+  }
+
+  evaluate(expression: string | number): any {
+    try {
+      return this.evaluateInternal(expression);
+    } catch (error) {
+      throw normalizeEvaluatorError(error, "resolve");
+    }
+  }
+
+  evaluateTyped(expression: string | number): TypedValue {
+    try {
+      return this.evaluateTypedInternal(expression);
+    } catch (error) {
+      throw normalizeEvaluatorError(error, "resolve");
+    }
   }
 
   private tokenize(expr: string): string[] {
@@ -2041,5 +2075,9 @@ export function validateExpressionSyntax(expression: string): void {
       allowUnknownGeometryObjects: true,
     }
   );
-  evaluator.evaluate(expression);
+  try {
+    evaluator.evaluate(expression);
+  } catch (error) {
+    throw normalizeEvaluatorError(error, "validate");
+  }
 }

@@ -1,6 +1,7 @@
 import type { RelGeoDocument, RelGeoErrorCode, RelGeoError, RelGeoMode, SourceRange } from "./types";
 import { validateExpressionSyntax, evaluateExpression } from "./evaluator";
 import { PLACE_FIELDS } from "./constants";
+import { normalizeErrorCode, stripErrorCodePrefix } from "./errors";
 
 const STANDARD_ANCHORS = new Set([
   "left", "right", "top", "bottom",
@@ -81,18 +82,25 @@ export class ValidationError extends Error implements RelGeoError {
   phase = "validate" as const;
   severity = "error" as const;
   range?: SourceRange;
+  public code: RelGeoErrorCode;
+  public path?: string;
+  public objectId?: string;
 
   constructor(
     message: string,
-    public path?: string,
-    public code?: RelGeoErrorCode | string,
-    public objectId?: string,
+    path?: string,
+    code?: RelGeoErrorCode,
+    objectId?: string,
     range?: SourceRange
   ) {
-    const fullMessage = code ? `${code}: ${message}` : message;
+    const normalizedCode = normalizeErrorCode(code, message, "INVALID_VALUE");
+    const fullMessage = `${normalizedCode}: ${stripErrorCodePrefix(message)}`;
     super(fullMessage);
     this.message = fullMessage;
     this.name = "ValidationError";
+    this.code = normalizedCode;
+    this.path = path;
+    this.objectId = objectId;
     this.range = range;
   }
 }
@@ -126,8 +134,8 @@ export class Validator {
       };
       const rawMessage = error instanceof Error ? error.message : String(error);
       const prefix = rawMessage.match(/^([A-Z][A-Z0-9_]*):\s*/)?.[1];
-      const code = candidate.code ?? prefix ?? "INVALID_EXPRESSION";
-      const message = prefix ? rawMessage.replace(/^([A-Z][A-Z0-9_]*):\s*/, "") : rawMessage;
+      const code = normalizeErrorCode(candidate.code ?? prefix, rawMessage, "INVALID_EXPRESSION");
+      const message = stripErrorCodePrefix(rawMessage);
       throw new ValidationError(message, candidate.path, code, candidate.objectId);
     }
   }
@@ -216,7 +224,7 @@ export class Validator {
                 evaluateExpression(expr, mockCtx as any, { allowUnknownIdentifiers: true, allowUnknownGeometryObjects: true });
               } catch (e: any) {
                 if (this.mode !== "editor") {
-                  throw new ValidationError(`Invalid export expression "${key}": ${e.message}`, `components.${compId}.exports.${key}`, "INVALID_EXPRESSION");
+                  throw new ValidationError(`Invalid export expression "${key}": ${stripErrorCodePrefix(e.message)}`, `components.${compId}.exports.${key}`, "INVALID_EXPRESSION");
                 }
               }
             }
@@ -514,7 +522,7 @@ export class Validator {
         });
       } catch (error: any) {
         if (this.mode !== "editor") {
-          throw new ValidationError(`Invalid expression syntax: ${error.message}`, path, "INVALID_EXPRESSION");
+            throw new ValidationError(`Invalid expression syntax: ${stripErrorCodePrefix(error.message)}`, path, "INVALID_EXPRESSION");
         }
       }
     };
@@ -978,7 +986,7 @@ export class Validator {
           try {
             validateExpr(expr, subpath);
           } catch (e: any) {
-            throw new ValidationError(e.message, subpath, "DIMENSION_TARGET_INVALID");
+            throw new ValidationError(stripErrorCodePrefix(e.message), subpath, "DIMENSION_TARGET_INVALID");
           }
         };
         validateDimExpr(obj.from, `${path}.from`);
@@ -1010,7 +1018,7 @@ export class Validator {
           try {
             validateExpr(expr, subpath);
           } catch (e: any) {
-            throw new ValidationError(e.message, subpath, "ANNOTATION_TARGET_INVALID");
+            throw new ValidationError(stripErrorCodePrefix(e.message), subpath, "ANNOTATION_TARGET_INVALID");
           }
         };
         validateAnnExpr(obj.target, `${path}.target`);

@@ -6,20 +6,13 @@ import { sortNodes } from "../graph";
 import { getExpressionDependencies } from "./expression-deps";
 import type { ResolveOptions } from "./types";
 import { ResolveError } from "./types";
+import { normalizeErrorCode, stripErrorCodePrefix } from "../errors";
 
 function wrapError(e: any, id: string, path: string): never {
     if (e instanceof ResolveError) throw e;
-    let code = "RESOLVE_ERROR";
-    if (e.message.includes("Unknown identifier")) {
-        code = "UNKNOWN_REFERENCE";
-    } else if (e.message.includes("INVALID_T_AT_LENGTH")) {
-        code = "INVALID_T_AT_LENGTH";
-    } else if (e.message.includes("PATH_LENGTH_UNAVAILABLE")) {
-        code = "PATH_LENGTH_UNAVAILABLE";
-    } else if (e.message.includes("FRAME_RESOLUTION_FAILED")) {
-        code = "FRAME_RESOLUTION_FAILED";
-    }
-    throw new ResolveError(e.message, code, id, path);
+    const rawMessage = e instanceof Error ? e.message : String(e);
+    const code = normalizeErrorCode(e?.code, rawMessage, "RESOLVE_ERROR");
+    throw new ResolveError(stripErrorCodePrefix(rawMessage), code, id, path);
 }
 
 function applyOverridesAndNormalize(
@@ -218,4 +211,3 @@ export function evaluateSingleDerived(
         wrapError(e, id, `derived.${id}`);
     }
 }
-

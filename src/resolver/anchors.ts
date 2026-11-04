@@ -2,6 +2,7 @@ import { evaluateExpression } from "../evaluator";
 import { normalizeUnit } from "../units";
 import { applyGroupTransform } from "./transform-utils";
 import { ResolveContext, ResolveError } from "./types";
+import { normalizeErrorCode, stripErrorCodePrefix } from "../errors";
 import { createEvalContext } from "./eval-context";
 import { calculateBoundingBox } from "./geometry-utils";
 import type { AnchorRef } from "../types";
@@ -266,7 +267,12 @@ export function resolveAnchorValue(ref: unknown, ctx: ResolveContext): any {
     try {
         return evaluateExpression(ref, evalCtx);
     } catch (e: any) {
-        throw new ResolveError(e.message || `Error resolving expression: ${ref}`, "INVALID_EXPRESSION");
+        const rawMessage = e instanceof Error ? e.message : String(e);
+        const code = normalizeErrorCode(e?.code, rawMessage, "INVALID_EXPRESSION");
+        throw new ResolveError(
+            stripErrorCodePrefix(rawMessage || `Error resolving expression: ${ref}`),
+            code,
+        );
     }
 }
 

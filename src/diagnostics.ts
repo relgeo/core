@@ -65,7 +65,10 @@ export function collectDiagnostics(
   options: CollectDiagnosticsOptions = {},
 ): RelGeoDiagnostic[] {
   const mode = options.mode ?? "validate";
-  const maxDiagnostics = options.maxDiagnostics ?? 100;
+  const requestedMax = options.maxDiagnostics ?? 100;
+  const maxDiagnostics = Number.isFinite(requestedMax)
+    ? Math.max(0, Math.floor(requestedMax))
+    : 100;
   const diagnostics: RelGeoDiagnostic[] = [];
   let doc: RelGeoDocument;
   let source: string | undefined;

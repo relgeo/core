@@ -1,6 +1,7 @@
 import { load } from "js-yaml";
-import type { RelGeoDocument, RelGeoMode, RelGeoObject, SourceRange } from "./types";
+import type { RelGeoDocument, RelGeoErrorCode, RelGeoMode, RelGeoObject, SourceRange } from "./types";
 import { Validator, ValidationError } from "./validator";
+import { normalizeErrorCode, stripErrorCodePrefix } from "./errors";
 
 export const ACTIVE_REL_GEO_SPEC_VERSION = "0.5";
 export const SUPPORTED_REL_GEO_SPEC_VERSIONS = ["0.4", "0.5"] as const;
@@ -34,15 +35,16 @@ export function classifyRelGeoSpecVersion(version: string | number): RelGeoSpecV
 
 export class ParseError extends Error {
   path?: string;
-  code?: string;
+  code: RelGeoErrorCode;
   phase = "parse" as const;
   severity = "error" as const;
   range?: SourceRange;
 
-  constructor(message: string, path?: string, code?: string, range?: SourceRange) {
-    super(message);
+  constructor(message: string, path?: string, code?: RelGeoErrorCode, range?: SourceRange) {
+    const normalizedCode = normalizeErrorCode(code, message, "INVALID_YAML");
+    super(`${normalizedCode}: ${stripErrorCodePrefix(message)}`);
     this.path = path;
-    this.code = code;
+    this.code = normalizedCode;
     this.range = range;
     this.name = "ParseError";
   }
@@ -145,7 +147,7 @@ function normalizeHolesInObjects(objects: any) {
  * parseRelGeo() is strict by default.
  * Use parseForEditor() for tolerant playground/editor parsing.
  */
-export function parseRelGeo(
+function parseRelGeoInternal(
   yaml: string,
   options: ParseOptions = {}
 ): RelGeoDocument & { objects: Record<string, RelGeoObject> } {
@@ -273,11 +275,34 @@ export function parseRelGeo(
       }
       const rawMessage = error instanceof Error ? error.message : String(error);
       const prefix = rawMessage.match(/^([A-Z][A-Z0-9_]*):\s*/)?.[1];
-      const code = error?.code ?? prefix ?? "INVALID_EXPRESSION";
-      const message = prefix ? rawMessage.replace(/^([A-Z][A-Z0-9_]*):\s*/, "") : rawMessage;
+      const code = normalizeErrorCode(error?.code ?? prefix, rawMessage, "INVALID_EXPRESSION");
+      const message = stripErrorCodePrefix(rawMessage);
       throw new ParseError(message, error?.path, code);
     }
   }
 
   return doc as RelGeoDocument & { objects: Record<string, RelGeoObject> };
+}
+
+/** Public parser boundary: unexpected internals are still structured errors. */
+export function parseRelGeo(
+  yaml: string,
+  options: ParseOptions = {},
+): RelGeoDocument & { objects: Record<string, RelGeoObject> } {
+  try {
+    return parseRelGeoInternal(yaml, options);
+  } catch (error) {
+    if (error instanceof ParseError) throw error;
+    const candidate = error && typeof error === "object"
+      ? error as { code?: unknown; path?: string; range?: SourceRange }
+      : {};
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const code = normalizeErrorCode(candidate.code, rawMessage, "INVALID_YAML");
+    throw new ParseError(
+      stripErrorCodePrefix(rawMessage),
+      candidate.path,
+      code,
+      candidate.range,
+    );
+  }
 }

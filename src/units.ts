@@ -1,4 +1,5 @@
 import type { LengthUnit } from "./types";
+import { CoreError } from "./errors";
 
 const MM_TO_PX = 96 / 25.4;
 const CM_TO_PX = 96 / 2.54;
@@ -13,7 +14,7 @@ export function convertToPx(value: string | number): number {
   if (!match) {
     const num = parseFloat(value);
     if (isNaN(num)) {
-      throw new Error(`INVALID_UNIT_VALUE: ${value}`);
+      throw new CoreError(value, "INVALID_UNIT_VALUE", { phase: "validate" });
     }
     return num;
   }
