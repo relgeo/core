@@ -35,6 +35,11 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
         "INVALID_COLLECTION_ACCESS",
         { phase: "runtime", objectId: ctx.currentObjectId, path: objectPath },
     );
+    const collectionArgumentError = (message: string): CoreError => new CoreError(
+        message,
+        "TYPE_MISMATCH",
+        { phase: "resolve", objectId: ctx.currentObjectId, path: objectPath },
+    );
 
     return {
         scalars: ctx.scalars,
@@ -143,7 +148,7 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
         callFunction: (name: string, args: TypedValue[]) => {
             if (name === "count") {
                 const arg = args[0];
-                if (!arg) throw new Error("count() requires exactly one argument");
+                if (!arg) throw collectionArgumentError("count() requires exactly one argument");
                 if (arg.type === "array" && Array.isArray(arg.value)) {
                     return wrapTypedValue(arg.value.length);
                 }
@@ -156,12 +161,12 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                 if (Array.isArray(val)) {
                     return wrapTypedValue(val.length);
                 }
-                throw new Error(`count() argument must be an array or collection, got type "${arg.type}"`);
+                throw collectionArgumentError(`count() argument must be an array or collection, got type "${arg.type}"`);
             }
             
             if (name === "first") {
                 const arg = args[0];
-                if (!arg) throw new Error("first() requires exactly one argument");
+                if (!arg) throw collectionArgumentError("first() requires exactly one argument");
                 if (arg.type === "array" && Array.isArray(arg.value)) {
                     if (arg.value.length === 0) {
                         throw collectionError("first() called on empty array");
@@ -188,12 +193,12 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                     }
                     return wrapTypedValue(val[0]);
                 }
-                throw new Error(`first() argument must be an array or collection, got type "${arg.type}"`);
+                throw collectionArgumentError(`first() argument must be an array or collection, got type "${arg.type}"`);
             }
             
             if (name === "last") {
                 const arg = args[0];
-                if (!arg) throw new Error("last() requires exactly one argument");
+                if (!arg) throw collectionArgumentError("last() requires exactly one argument");
                 if (arg.type === "array" && Array.isArray(arg.value)) {
                     if (arg.value.length === 0) {
                         throw collectionError("last() called on empty array");
@@ -220,7 +225,7 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                     }
                     return wrapTypedValue(val[val.length - 1]);
                 }
-                throw new Error(`last() argument must be an array or collection, got type "${arg.type}"`);
+                throw collectionArgumentError(`last() argument must be an array or collection, got type "${arg.type}"`);
             }
             
             return undefined;

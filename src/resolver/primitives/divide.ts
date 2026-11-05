@@ -39,8 +39,10 @@ export function resolveDivide(
     // Determine if the target object is a closed path/shape
     const isClosed = 
         targetObj.type === "circle" || 
+        targetObj.type === "ellipse" ||
         targetObj.type === "rect" || 
-        targetObj.type === "polygon" || 
+        targetObj.type === "polygon" ||
+        targetObj.type === "boolean" ||
         (targetObj.type === "path" && targetObj.closed === true);
 
     const points: { x: number; y: number }[] = [];

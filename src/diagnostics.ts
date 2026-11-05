@@ -5,9 +5,10 @@ import type {
   RelGeoMode,
   SourceRange,
 } from "./types";
-import { ParseError, parseRelGeo } from "./parser";
+import { ParseError, parseRelGeo, sourceRangeForPath } from "./parser";
 import { Validator } from "./validator";
 import { resolveGeometry } from "./resolver";
+import { getObjectDependencies } from "./graph";
 import { sortDiagnostics, toDiagnostic } from "./errors";
 
 export interface CollectDiagnosticsOptions {
@@ -16,27 +17,8 @@ export interface CollectDiagnosticsOptions {
   maxDiagnostics?: number;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function rangeForPath(source: string | undefined, path: string | undefined): SourceRange | undefined {
-  if (!source || !path) return undefined;
-  const rawPart = path.split(".").at(-1)?.replace(/\[\d+\]/g, "");
-  if (!rawPart) return undefined;
-  const key = rawPart.replace(/^['"]|['"]$/g, "");
-  const pattern = new RegExp(`^\\s*(?:["']${escapeRegExp(key)}["']|${escapeRegExp(key)}):`);
-  const lines = source.split("\n");
-  for (let line = 0; line < lines.length; line += 1) {
-    const match = lines[line].match(pattern);
-    if (!match) continue;
-    const startColumn = match[0].search(/\S/);
-    return {
-      start: { line, column: Math.max(0, startColumn) },
-      end: { line, column: lines[line].length },
-    };
-  }
-  return undefined;
+  return source ? sourceRangeForPath(source, path) : undefined;
 }
 
 function pushValidationDiagnostic(
@@ -53,6 +35,62 @@ function pushValidationDiagnostic(
   const last = diagnostics.at(-1);
   const pathObjectId = candidate.path?.match(/^objects\.([^.[\]]+)/)?.[1];
   if (last && !last.objectId) last.objectId = objectId ?? pathObjectId;
+}
+
+function dependencyClosure(doc: RelGeoDocument, rootId: string): Set<string> {
+  const objects = doc.objects ?? {};
+  const objectIds = new Set(Object.keys(objects));
+  const included = new Set<string>();
+  const pending = [rootId];
+
+  while (pending.length > 0) {
+    const id = pending.pop()!;
+    if (included.has(id) || !objects[id]) continue;
+    included.add(id);
+    const dependencies = getObjectDependencies(id, objects[id], objectIds, undefined, doc);
+    for (const dependency of dependencies) {
+      if (!included.has(dependency)) pending.push(dependency);
+    }
+  }
+
+  return included;
+}
+
+function collectIndependentResolutionDiagnostics(
+  doc: RelGeoDocument,
+  mode: RelGeoMode,
+  diagnostics: RelGeoDiagnostic[],
+  source?: string,
+): void {
+  const objects = doc.objects ?? {};
+  for (const objectId of Object.keys(objects)) {
+    const ids = dependencyClosure(doc, objectId);
+    const isolatedObjects = Object.fromEntries([...ids].map((id) => [id, objects[id]]));
+    const isolatedDoc: RelGeoDocument = {
+      ...doc,
+      objects: isolatedObjects,
+      // Constraints/views/sheets can reference objects outside the closure and
+      // would turn an independent object probe into unrelated noise.
+      constraints: undefined,
+      views: undefined,
+      sheets: undefined,
+    };
+
+    try {
+      resolveGeometry(isolatedDoc, { mode });
+    } catch (error) {
+      const candidate = error && typeof error === "object"
+        ? error as { path?: string; objectId?: string }
+        : {};
+      const path = candidate.path ?? `objects.${objectId}`;
+      diagnostics.push(toDiagnostic(error, {
+        phase: "resolve",
+        path,
+        objectId: candidate.objectId ?? objectId,
+        range: rangeForPath(source, path),
+      }));
+    }
+  }
 }
 
 /**
@@ -129,6 +167,7 @@ export function collectDiagnostics(
       }
     } catch (error) {
       diagnostics.push(toDiagnostic(error, { phase: "resolve" }));
+      collectIndependentResolutionDiagnostics(doc, mode, diagnostics, source);
     }
   }
 
@@ -142,6 +181,10 @@ function diagnosticFromConstraint(violation: ConstraintViolation): RelGeoDiagnos
     path: violation.path,
     objectId: violation.involvedObjects[0],
     phase: "constraint",
-    severity: "error",
+    severity: violation.severity ?? "error",
+    constraintType: violation.type,
+    origin: violation.origin ?? "constraint",
+    expected: violation.expected,
+    actual: violation.actual,
   };
 }

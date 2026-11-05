@@ -21,11 +21,27 @@ const TEXT_ANCHORS = new Set([
 const POINT_COMPONENTS = new Set(["x", "y"]);
 
 const LINE_DIRECTIONS = new Set(["left", "right", "up", "down"]);
+const RELATIVE_LINE_DIRECTIONS = new Set([
+  "left", "right", "up", "down",
+  "up-right", "up-left", "down-right", "down-left",
+]);
 const MOVE_FIELDS = new Set(["angle", "distance", "left", "right", "up", "down", "x", "y"]);
 const OFFSET_SIDES = new Set(["left", "right", "inside", "outside"]);
 const MIRROR_AXES = new Set(["x", "y", "both"]);
 const REPEAT_ALONG_SPACING = new Set(["uniform-length", "uniform-t", "fixed-distance"]);
 const PATH_LIKE_OBJECT_TYPES = new Set(["line", "arc", "circle", "ellipse", "rect", "quadratic", "cubic", "path", "polygon"]);
+const SPLIT_TARGET_OBJECT_TYPES = new Set(["line", "arc", "quadratic", "cubic", "path"]);
+// Geometry operations produce geometry objects, not annotations, text, or
+// collection/layout metadata. Keep this boundary explicit so a statically
+// known incompatible target fails before resolver execution.
+const GEOMETRY_OPERATION_TARGET_TYPES = new Set([
+  "point", "line", "rect", "circle", "ellipse", "arc", "quadratic", "cubic",
+  "path", "polygon", "boolean", "group", "clone", "translate", "rotate",
+  "scale", "mirror", "reverse", "split",
+]);
+const REVERSIBLE_TARGET_TYPES = new Set([
+  "line", "arc", "circle", "ellipse", "rect", "quadratic", "cubic", "path", "polygon", "boolean",
+]);
 
 
 const SCENE_UNITS = new Set(["mm", "cm", "m", "in", "px"]);
@@ -186,7 +202,7 @@ export class Validator {
                   }),
                   resolveIdentifier: (name: string) => {
                     if (compValidator.isValidObjectReference(name) || this.isValidObjectReference(name)) return 1;
-                    throw new Error(`Unknown identifier: ${name}`);
+                    throw new ValidationError(`Unknown identifier: ${name}`, undefined, "UNKNOWN_IDENTIFIER");
                   },
                   get: (name: string) => {
                     const innerObj = compValidator.doc.objects?.[name];
@@ -208,7 +224,11 @@ export class Validator {
                     if (objType) {
                       const anchors = OBJECT_ANCHORS[objType];
                       if (anchors && !anchors.has(member)) {
-                        throw new Error(`Unknown member "${member}" on type "${objType}"`);
+                        throw new ValidationError(
+                          `Unknown member "${member}" on type "${objType}"`,
+                          undefined,
+                          "UNKNOWN_ANCHOR",
+                        );
                       }
                     }
                     return { type: "number", value: 1 };
@@ -236,9 +256,16 @@ export class Validator {
     }
   }
 
-  private isEffectivelyClosedPath(obj: any): boolean {
+  private isEffectivelyClosedPath(obj: any, seen = new Set<any>()): boolean {
     if (!obj) return false;
-    if (obj.type === "boolean" || obj.type === "polygon" || obj.type === "rect" || obj.type === "circle" || obj.type === "ellipse") return true;
+    if (seen.has(obj)) return false;
+    seen.add(obj);
+    if (obj.type === "polygon" || obj.type === "rect" || obj.type === "circle" || obj.type === "ellipse") return true;
+    if (obj.type === "boolean") return obj.result?.mode !== "multi";
+    if (obj.type === "clone") {
+      const target = this.doc.objects?.[obj.of];
+      return !!target && this.isEffectivelyClosedPath(target, seen);
+    }
     if (obj.type !== "path") return false;
     if (obj.closed) return true;
     if (obj.offset?.from) {
@@ -246,6 +273,62 @@ export class Validator {
       if (!source) return false;
       if (source.type === "polygon") return true;
       if (source.type === "path") return !!source.closed;
+    }
+    return false;
+  }
+
+  /**
+   * Boolean operands are a closed-shape boundary, not merely arbitrary object
+   * references. Keep this check in validation so unsupported operands fail at
+   * their declaration site instead of becoming a generic BOOLEAN_FAILED after
+   * geometry normalization. Collections are intentionally excluded: a v0.5
+   * multi result must be consumed through collection access or selected child
+   * identity, never implicitly flattened into a boolean operand.
+   */
+  private validateOperationTarget(target: unknown, path: string, operation: string): void {
+    if (typeof target !== "string") return;
+    const targetObject = this.doc.objects?.[target] as any;
+    if (!targetObject) return;
+    if (!GEOMETRY_OPERATION_TARGET_TYPES.has(targetObject.type)) {
+      throw new ValidationError(
+        `${operation} target "${target}" is not a geometry object`,
+        path,
+        "INVALID_OPERATION_TARGET",
+      );
+    }
+    if (operation === "reverse" && !REVERSIBLE_TARGET_TYPES.has(targetObject.type)) {
+      throw new ValidationError(
+        `reverse target "${target}" does not expose a reversible traversal surface`,
+        path,
+        "INVALID_REVERSE_TARGET",
+      );
+    }
+  }
+
+  private validateBooleanOperand(ref: unknown, path: string): void {
+    if (typeof ref !== "string") return;
+    const target = this.doc.objects?.[ref];
+    if (!target) return;
+    if (!this.isEffectivelyClosedPath(target)) {
+      throw new ValidationError(
+        `Boolean operand "${ref}" must resolve to a closed shape, got "${target.type}"`,
+        path,
+        "TYPE_MISMATCH",
+      );
+    }
+  }
+
+  private knownOpenSplitTarget(id: string, seen = new Set<string>()): boolean | undefined {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const target = this.doc.objects?.[id] as any;
+    if (!target) return undefined;
+    if (SPLIT_TARGET_OBJECT_TYPES.has(target.type)) {
+      return target.type !== "path" || target.closed !== true;
+    }
+    if (["translate", "rotate", "scale", "mirror", "reverse", "clone"].includes(target.type)) {
+      const next = target.target ?? target.of;
+      return typeof next === "string" ? this.knownOpenSplitTarget(next, seen) : false;
     }
     return false;
   }
@@ -380,12 +463,15 @@ export class Validator {
               const invalidPart = parts[1];
               if (this.objectIds.has(base)) {
                 const baseObj = this.doc.objects![base];
-                if (baseObj && baseObj.type === "component") {
-                  throw new Error(`Unknown anchor: ${invalidPart} on component ${base}`);
+                if (String(this.doc.version) === "0.5" && baseObj?.type === "path" && invalidPart === "area" && !this.isEffectivelyClosedPath(baseObj)) {
+                  throw new ValidationError(`Path "${base}" must be closed to expose area`, undefined, "PATH_NOT_CLOSED");
                 }
-                throw new Error(`Unknown anchor: ${invalidPart} on object ${base}`);
+                if (baseObj && baseObj.type === "component") {
+                  throw new ValidationError(`Unknown anchor: ${invalidPart} on component ${base}`, undefined, "UNKNOWN_ANCHOR");
+                }
+                throw new ValidationError(`Unknown anchor: ${invalidPart} on object ${base}`, undefined, "UNKNOWN_ANCHOR");
               }
-              throw new Error(`Invalid object reference: ${match}`);
+              throw new ValidationError(`Invalid object reference: ${match}`, undefined, "UNKNOWN_REFERENCE");
             }
           }
         }
@@ -421,13 +507,13 @@ export class Validator {
             }
 
             if (!name.includes(".")) {
-              throw new Error(`Unknown identifier: ${name}`);
+              throw new ValidationError(`Unknown identifier: ${name}`, undefined, "UNKNOWN_IDENTIFIER");
             }
             const [base, anchor] = name.split(".");
             if (this.objectIds.has(base)) {
-              throw new Error(`Unknown anchor: ${anchor} on object ${base}`);
+              throw new ValidationError(`Unknown anchor: ${anchor} on object ${base}`, undefined, "UNKNOWN_ANCHOR");
             }
-            throw new Error(`Unknown identifier: ${name}`);
+            throw new ValidationError(`Unknown identifier: ${name}`, undefined, "UNKNOWN_IDENTIFIER");
           },
           get: (name: string) => {
             if (this.objectIds.has(name)) {
@@ -481,7 +567,7 @@ export class Validator {
                 if ((type === "path" || type === "boolean") && member === "area" && id) {
                   const rawObj = this.doc.objects![id];
                   if (rawObj && !this.isEffectivelyClosedPath(rawObj)) {
-                    throw new Error("area is only available on closed path");
+                    throw new ValidationError("area is only available on closed path", undefined, "PATH_NOT_CLOSED");
                   }
                 }
                 if (POINT_RETURNING_ANCHORS[type]?.has(member)) {
@@ -489,13 +575,13 @@ export class Validator {
                 }
                 return { type: "number" as const, value: 1 };
               }
-              throw new Error(`Unknown anchor: ${member} on object`);
+              throw new ValidationError(`Unknown anchor: ${member} on object`, undefined, "UNKNOWN_ANCHOR");
             }
             if ((obj.type === "point" || (obj.value && obj.value.type === "point"))) {
               if (POINT_COMPONENTS.has(member)) {
                 return { type: "number" as const, value: 1 };
               }
-              throw new Error(`Unknown anchor: ${member} on point`);
+              throw new ValidationError(`Unknown anchor: ${member} on point`, undefined, "UNKNOWN_ANCHOR");
             }
             return { type: "number" as const, value: 1 };
           },
@@ -528,7 +614,10 @@ export class Validator {
         });
       } catch (error: any) {
         if (this.mode !== "editor") {
-            throw new ValidationError(`Invalid expression syntax: ${stripErrorCodePrefix(error.message)}`, path, "INVALID_EXPRESSION");
+            const rawMessage = error instanceof Error ? error.message : String(error);
+            const normalizedCode = normalizeErrorCode(error?.code, rawMessage, "INVALID_EXPRESSION");
+            const code = String(this.doc.version) === "0.5" ? normalizedCode : "INVALID_EXPRESSION";
+            throw new ValidationError(`Invalid expression syntax: ${stripErrorCodePrefix(rawMessage)}`, path, code);
         }
       }
     };
@@ -801,6 +890,16 @@ export class Validator {
             if (!obj.offset.from || obj.offset.distance === undefined) {
               throw new ValidationError(`path "${id}" offset mode requires "from" and "distance"`, `${path}.offset`, "MISSING_REQUIRED_FIELD");
             }
+            if (
+              typeof obj.offset.distance === "number" &&
+              (!Number.isFinite(obj.offset.distance) || obj.offset.distance < 0)
+            ) {
+              throw new ValidationError(
+                `path "${id}" offset distance must be finite and non-negative`,
+                `${path}.offset.distance`,
+                "INVALID_OFFSET",
+              );
+            }
           }
           if ((obj as any).closeWith !== undefined) {
             if (!hasJoin || obj.closed !== true) {
@@ -855,6 +954,47 @@ export class Validator {
         if (Array.isArray(obj.holes)) {
           this.validateClosedShapeHoles(obj.holes, path, validateExpr);
         }
+      } else if (obj.type === "boolean") {
+        const operation = obj.operation;
+        if (this.mode !== "editor") {
+          if (operation === undefined) {
+            throw new ValidationError(`boolean "${id}" requires "operation"`, `${path}.operation`, "MISSING_REQUIRED_FIELD");
+          }
+          if (!["union", "subtract", "intersect", "xor"].includes(operation)) {
+            throw new ValidationError(`Invalid boolean operation: ${operation}`, `${path}.operation`, "INVALID_BOOLEAN_OPERATION");
+          }
+          if (obj.result?.mode !== undefined && !["single", "multi"].includes(obj.result.mode)) {
+            throw new ValidationError(`Invalid boolean result mode: ${obj.result.mode}`, `${path}.result.mode`, "INVALID_VALUE");
+          }
+          if (operation === "subtract") {
+            if (obj.base === undefined) {
+              throw new ValidationError(`subtract boolean "${id}" requires "base"`, `${path}.base`, "INVALID_BOOLEAN_OPERATION");
+            }
+            if (!Array.isArray(obj.tools) || obj.tools.length === 0) {
+              throw new ValidationError(`subtract boolean "${id}" requires at least one "tools" reference`, `${path}.tools`, "INVALID_BOOLEAN_OPERATION");
+            }
+          } else if (!Array.isArray(obj.shapes) || obj.shapes.length === 0) {
+            throw new ValidationError(`boolean "${id}" requires at least one "shapes" reference`, `${path}.shapes`, "INVALID_BOOLEAN_OPERATION");
+          }
+        }
+
+        if (obj.base !== undefined) validateExpr(obj.base, `${path}.base`);
+        if (obj.base !== undefined) this.validateBooleanOperand(obj.base, `${path}.base`);
+        if (Array.isArray(obj.tools)) {
+          obj.tools.forEach((ref: any, index: number) => {
+            validateExpr(ref, `${path}.tools[${index}]`);
+            this.validateBooleanOperand(ref, `${path}.tools[${index}]`);
+          });
+        }
+        if (Array.isArray(obj.shapes)) {
+          obj.shapes.forEach((ref: any, index: number) => {
+            validateExpr(ref, `${path}.shapes[${index}]`);
+            this.validateBooleanOperand(ref, `${path}.shapes[${index}]`);
+          });
+        }
+        if (obj.holes) this.validateClosedShapeHoles(obj.holes, path, validateExpr);
+        if (obj.place) this.validatePlace(obj.place, path, validateExpr);
+        if (obj.transform) this.validateTransform(obj.transform, path, validateExpr);
       } else if (obj.type === "group") {
         if (obj.place) {
           this.validatePlace(obj.place, path, validateExpr);
@@ -871,6 +1011,7 @@ export class Validator {
             throw new ValidationError(`translate "${id}" requires "by" as [x, y]`, `${path}.by`, "MISSING_REQUIRED_FIELD");
           }
         }
+        this.validateOperationTarget(obj.target, `${path}.target`, "translate");
         validateExpr(obj.target, `${path}.target`);
         if (Array.isArray(obj.by)) {
           validateExpr(obj.by[0], `${path}.by[0]`);
@@ -885,6 +1026,7 @@ export class Validator {
             throw new ValidationError(`rotate "${id}" requires "angle"`, `${path}.angle`, "MISSING_REQUIRED_FIELD");
           }
         }
+        this.validateOperationTarget(obj.target, `${path}.target`, "rotate");
         validateExpr(obj.target, `${path}.target`);
         validateExpr(obj.angle, `${path}.angle`);
         if (obj.origin !== undefined) {
@@ -899,14 +1041,21 @@ export class Validator {
             throw new ValidationError(`scale "${id}" requires "factor"`, `${path}.factor`, "MISSING_REQUIRED_FIELD");
           }
         }
+        this.validateOperationTarget(obj.target, `${path}.target`, "scale");
         validateExpr(obj.target, `${path}.target`);
         if (Array.isArray(obj.factor)) {
           if (obj.factor.length !== 2) {
-            throw new ValidationError(`scale "${id}" factor must be [sx, sy]`, `${path}.factor`, "INVALID_VALUE");
+            throw new ValidationError(`scale "${id}" factor must be [sx, sy]`, `${path}.factor`, "INVALID_SCALE_FACTOR");
+          }
+          if (obj.factor.some((factor: unknown) => typeof factor === "number" && (!Number.isFinite(factor) || factor <= 0))) {
+            throw new ValidationError(`scale "${id}" factor values must be finite and positive`, `${path}.factor`, "INVALID_SCALE_FACTOR");
           }
           validateExpr(obj.factor[0], `${path}.factor[0]`);
           validateExpr(obj.factor[1], `${path}.factor[1]`);
         } else {
+          if (typeof obj.factor === "number" && (!Number.isFinite(obj.factor) || obj.factor <= 0)) {
+            throw new ValidationError(`scale "${id}" factor must be finite and positive`, `${path}.factor`, "INVALID_SCALE_FACTOR");
+          }
           validateExpr(obj.factor, `${path}.factor`);
         }
         if (obj.origin !== undefined) {
@@ -921,9 +1070,10 @@ export class Validator {
             throw new ValidationError(`mirror "${id}" requires "axis"`, `${path}.axis`, "MISSING_REQUIRED_FIELD");
           }
           if (!["x", "y", "both"].includes(obj.axis)) {
-            throw new ValidationError(`Invalid mirror axis: ${obj.axis}. Expected "x", "y", or "both"`, `${path}.axis`, "INVALID_VALUE");
+            throw new ValidationError(`Invalid mirror axis: ${obj.axis}. Expected "x", "y", or "both"`, `${path}.axis`, "INVALID_MIRROR_AXIS");
           }
         }
+        this.validateOperationTarget(obj.target, `${path}.target`, "mirror");
         validateExpr(obj.target, `${path}.target`);
         if (obj.origin !== undefined) {
           validateExpr(obj.origin, `${path}.origin`);
@@ -934,6 +1084,7 @@ export class Validator {
             throw new ValidationError(`reverse "${id}" requires "target"`, `${path}.target`, "MISSING_REQUIRED_FIELD");
           }
         }
+        this.validateOperationTarget(obj.target, `${path}.target`, "reverse");
         validateExpr(obj.target, `${path}.target`);
       } else if (obj.type === "split") {
         if (this.mode !== "editor") {
@@ -945,6 +1096,16 @@ export class Validator {
           }
           if (obj.pick !== undefined && obj.pick !== "first" && obj.pick !== "last") {
             throw new ValidationError(`split "${id}" pick must be "first" or "last"`, `${path}.pick`, "INVALID_VALUE");
+          }
+          if (typeof obj.target === "string") {
+            const knownTarget = this.knownOpenSplitTarget(obj.target);
+            if (knownTarget === false) {
+              throw new ValidationError(
+                `split target "${obj.target}" is not a supported open path-like geometry`,
+                `${path}.target`,
+                "INVALID_SPLIT_TARGET",
+              );
+            }
           }
         }
         validateExpr(obj.target, `${path}.target`);
@@ -1216,7 +1377,12 @@ export class Validator {
         if (value === null || typeof value !== "object" || Array.isArray(value)) {
           throw new ValidationError(`Path segment data must be an object`, `${segmentPath}.${segmentType}`, "TYPE_MISMATCH");
         }
-        const allowedFields = fieldSets[segmentType];
+        const isRelativeLine = segmentType === "line" &&
+          (value.forward !== undefined || value.turn !== undefined ||
+            (value.direction !== undefined && value.to === undefined));
+        const allowedFields = isRelativeLine
+          ? ["from", "direction", "turn", "forward"]
+          : fieldSets[segmentType];
         for (const field of Object.keys(value)) {
           if (!allowedFields.includes(field) || (i > 0 && field === "from")) {
             throw new ValidationError(
@@ -1226,19 +1392,51 @@ export class Validator {
             );
           }
         }
-        const requiredFields = i === 0 ? allowedFields : allowedFields.filter((field) => field !== "from");
+        const requiredFields = isRelativeLine
+          ? (i === 0 ? ["from", "forward"] : ["forward"])
+          : (i === 0 ? allowedFields : allowedFields.filter((field) => field !== "from"));
         if (this.mode !== "editor") {
           const missing = requiredFields.filter((field) => value[field] === undefined);
           if (missing.length > 0) {
+            const code = isRelativeLine && missing[0] === "forward"
+              ? "INVALID_TURTLE_FORWARD"
+              : "MISSING_REQUIRED_FIELD";
             throw new ValidationError(
               `${segmentType} segment requires ${missing.map((field) => `"${field}"`).join(", ")}`,
               `${segmentPath}.${segmentType}.${missing[0]}`,
-              "MISSING_REQUIRED_FIELD"
+              code
             );
           }
         }
+        if (isRelativeLine && value.turn !== undefined && i === 0 && value.direction === undefined) {
+          throw new ValidationError(
+            "Relative line turn requires an existing heading",
+            `${segmentPath}.line.turn`,
+            "TURTLE_HEADING_UNAVAILABLE",
+          );
+        }
+        if (isRelativeLine && typeof value.forward === "number" &&
+          (!Number.isFinite(value.forward) || value.forward <= 0)) {
+          throw new ValidationError(
+            "Relative line forward must be finite and positive",
+            `${segmentPath}.line.forward`,
+            "INVALID_TURTLE_FORWARD",
+          );
+        }
+        if (isRelativeLine && typeof value.turn === "number" && !Number.isFinite(value.turn)) {
+          throw new ValidationError(
+            "Relative line turn must be finite",
+            `${segmentPath}.line.turn`,
+            "INVALID_TURTLE_TURN",
+          );
+        }
         for (const field of allowedFields) {
-          validateExpr(value[field], `${segmentPath}.${segmentType}.${field}`);
+          if (value[field] !== undefined) {
+            if (field === "direction" && typeof value[field] === "string" && RELATIVE_LINE_DIRECTIONS.has(value[field])) {
+              continue;
+            }
+            validateExpr(value[field], `${segmentPath}.${segmentType}.${field}`);
+          }
         }
       } else if (this.mode !== "editor") {
         throw new ValidationError(`Unknown path segment type: ${segmentType}`, segmentPath, "UNKNOWN_FIELD");
@@ -1268,6 +1466,15 @@ export class Validator {
           } else if (holeType === "circle") {
             validateExpr(holeData.center, `${innerPath}.center`);
             validateExpr(holeData.radius, `${innerPath}.radius`);
+          } else if (holeType === "ellipse") {
+            validateExpr(holeData.center, `${innerPath}.center`);
+            validateExpr(holeData.rx, `${innerPath}.rx`);
+            validateExpr(holeData.ry, `${innerPath}.ry`);
+            validateExpr(holeData.rotation, `${innerPath}.rotation`);
+            if (Array.isArray(holeData.size)) {
+              validateExpr(holeData.size[0], `${innerPath}.size[0]`);
+              validateExpr(holeData.size[1], `${innerPath}.size[1]`);
+            }
           } else if (holeType === "polygon") {
             if (Array.isArray(holeData.points)) {
               holeData.points.forEach((pt: any, idx: number) => validateExpr(pt, `${innerPath}.points[${idx}]`));
@@ -1283,7 +1490,7 @@ export class Validator {
           } else if (holeType === "segments" && Array.isArray(holeData)) {
             this.validatePathSegments(holeData, `${innerPath}`, validateExpr);
           } else {
-            throw new ValidationError(`Hole must be a string reference, an object with segments, or a closed shape definition`, holePath, "TYPE_MISMATCH");
+            throw new ValidationError(`Hole must be a string reference, an object with segments, or a closed shape definition`, holePath, "INVALID_HOLE_SHAPE");
           }
 
           const placeObj = hole.place || holeData?.place;

@@ -1,4 +1,4 @@
-import type { LengthUnit, RelGeoError, ResolvedObject } from "./types";
+import type { LengthUnit, RelGeoError, RelGeoErrorCode, ResolvedObject } from "./types";
 import { normalizeUnit } from "./units";
 import { intersectLines, computeIntersections, applySelector, type IntersectionSelector } from "./resolver/intersection";
 import { applyTransformPipeline } from "./resolver/transform-utils";
@@ -38,6 +38,23 @@ export interface EvalContext {
   getMember?: (value: TypedValue, key: string) => TypedValue | undefined;
   getIndex?: (value: TypedValue, index: any) => TypedValue | undefined;
   callFunction?: (name: string, args: TypedValue[]) => TypedValue | undefined;
+}
+
+/**
+ * Internal evaluator failures carry an optional catalog hint but deliberately
+ * do not expose a public phase. The evaluate/evaluateTyped boundary assigns
+ * the correct `resolve` phase, while validateExpressionSyntax assigns
+ * `validate`, preserving the existing phase contract for both callers.
+ */
+class EvaluatorInternalError extends Error {
+  constructor(message: string, public readonly code?: RelGeoErrorCode | string) {
+    super(message);
+    this.name = "EvaluatorInternalError";
+  }
+}
+
+function throwEvaluatorError(message: string, code?: RelGeoErrorCode | string): never {
+  throw new EvaluatorInternalError(message, code);
 }
 
 function normalizeEvaluatorError(
@@ -122,7 +139,7 @@ export class Evaluator {
 
     const result = this.parseExpression();
     if (this.pos !== this.tokens.length) {
-      throw new Error(`Unexpected token: ${this.tokens[this.pos]}`);
+      throwEvaluatorError(`Unexpected token: ${this.tokens[this.pos]}`);
     }
 
     return this.unwrap(result);
@@ -142,7 +159,7 @@ export class Evaluator {
 
     const result = this.parseExpression();
     if (this.pos !== this.tokens.length) {
-      throw new Error(`Unexpected token: ${this.tokens[this.pos]}`);
+      throwEvaluatorError(`Unexpected token: ${this.tokens[this.pos]}`);
     }
 
     return result;
@@ -164,6 +181,14 @@ export class Evaluator {
     }
   }
 
+  validateSyntax(expression: string): void {
+    try {
+      this.evaluateInternal(expression);
+    } catch (error) {
+      throw normalizeEvaluatorError(error, "validate");
+    }
+  }
+
   private tokenize(expr: string): string[] {
     const regex = /(\s+)|(\d+(?:\.\d+)?(?:px|mm|cm|m|%|deg|rad)?|[a-zA-Z_][a-zA-Z0-9_]*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|==|!=|<=|>=|&&|\|\||[-+*/(),:{}\[\]\.<>?%^!])/g;
     const tokens: string[] = [];
@@ -171,7 +196,7 @@ export class Evaluator {
     let lastIndex = 0;
     while ((match = regex.exec(expr)) !== null) {
       if (match.index !== lastIndex) {
-        throw new Error(`Invalid expression syntax: ${expr}`);
+        throwEvaluatorError(`Invalid expression syntax: ${expr}`);
       }
       if (!match[1]) {
         tokens.push(match[0]);
@@ -179,7 +204,7 @@ export class Evaluator {
       lastIndex = regex.lastIndex;
     }
     if (lastIndex !== expr.length) {
-      throw new Error(`Invalid expression syntax: ${expr}`);
+      throwEvaluatorError(`Invalid expression syntax: ${expr}`);
     }
     return tokens;
   }
@@ -194,7 +219,7 @@ export class Evaluator {
       this.pos++;
       const trueVal = this.parseExpression();
       if (this.pos >= this.tokens.length || this.tokens[this.pos] !== ":") {
-        throw new Error("Expected ':' in ternary operator");
+        throwEvaluatorError("Expected ':' in ternary operator");
       }
       this.pos++;
       const falseVal = this.parseExpression();
@@ -255,7 +280,7 @@ export class Evaluator {
         const lVal = this.unwrap(result);
         const rVal = this.unwrap(right);
         if (typeof lVal !== "number" || typeof rVal !== "number") {
-          throw new Error("Relational operators are only allowed on numbers");
+          throwEvaluatorError("Relational operators are only allowed on numbers");
         }
         if (token === "<") result = { type: "boolean", value: lVal < rVal };
         else if (token === ">") result = { type: "boolean", value: lVal > rVal };
@@ -279,7 +304,7 @@ export class Evaluator {
         const rVal = this.unwrap(result);
         const tVal = this.unwrap(term);
         if (typeof rVal !== "number" || typeof tVal !== "number") {
-          throw new Error(`Arithmetic operations are only allowed on numbers/lengths`);
+          throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
         }
         result = { type: "number", value: token === "+" ? rVal + tVal : rVal - tVal };
       } else {
@@ -301,12 +326,12 @@ export class Evaluator {
         const rVal = this.unwrap(result);
         const fVal = this.unwrap(factor);
         if (typeof rVal !== "number" || typeof fVal !== "number") {
-          throw new Error(`Arithmetic operations are only allowed on numbers/lengths`);
+          throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
         }
         if (token === "*") {
           result = { type: "number", value: rVal * fVal };
         } else if (token === "/") {
-          if (fVal === 0) throw new Error("Division by zero");
+          if (fVal === 0) throwEvaluatorError("Division by zero");
           result = { type: "number", value: rVal / fVal };
         } else if (token === "%") {
           result = { type: "number", value: rVal % fVal };
@@ -329,7 +354,7 @@ export class Evaluator {
       const lVal = this.unwrap(result);
       const rVal = this.unwrap(right);
       if (typeof lVal !== "number" || typeof rVal !== "number") {
-        throw new Error("Exponentiation is only allowed on numbers");
+        throwEvaluatorError("Exponentiation is only allowed on numbers");
       }
       result = { type: "number", value: Math.pow(lVal, rVal) };
     }
@@ -372,7 +397,7 @@ export class Evaluator {
         this.pos++; // consume '.'
         const member = this.tokens[this.pos++];
         if (!member || !/^[a-zA-Z_]/.test(member)) {
-          throw new Error(`Expected member identifier after '.'`);
+          throwEvaluatorError(`Expected member identifier after '.'`);
         }
         result = this.evaluateMember(result, member);
       } else if (nextToken === "[") {
@@ -383,7 +408,7 @@ export class Evaluator {
           indexExpressions.push(this.parseExpression());
         }
         if (this.tokens[this.pos++] !== "]") {
-          throw new Error("Missing closing bracket ']'");
+          throwEvaluatorError("Missing closing bracket ']'");
         }
         result = this.evaluateIndex(result, indexExpressions.length === 1 ? indexExpressions[0] : indexExpressions);
       } else {
@@ -408,7 +433,7 @@ export class Evaluator {
     if (this.options.allowUnknownIdentifiers) {
       return { type: "number", value: 1 };
     }
-    throw new Error(`Cannot access member "${member}" on value of type "${obj.type}"`);
+    throwEvaluatorError(`Cannot access member "${member}" on value of type "${obj.type}"`);
   }
 
   private evaluateIndex(arr: TypedValue, indexVal: TypedValue | TypedValue[]): TypedValue {
@@ -423,7 +448,7 @@ export class Evaluator {
     const unwrappedIdx = Array.isArray(indexVal) ? undefined : this.unwrap(indexVal);
     if (unwrappedIdx !== undefined) {
       if (typeof unwrappedIdx !== "number") {
-        throw new Error(`Index must be a number`);
+        throwEvaluatorError(`Index must be a number`);
       }
       if (arr.type === "array" || arr.type === "collection" || Array.isArray(arr.value)) {
         const item = arr.value[unwrappedIdx];
@@ -431,7 +456,7 @@ export class Evaluator {
           if (this.options.allowUnknownIdentifiers) {
             return { type: "number", value: 1 };
           }
-          throw new Error(`Index ${unwrappedIdx} out of bounds`);
+          throwEvaluatorError(`Index ${unwrappedIdx} out of bounds`);
         }
         return this.wrap(item);
       }
@@ -439,7 +464,7 @@ export class Evaluator {
     if (this.options.allowUnknownIdentifiers) {
       return { type: "number", value: 1 };
     }
-    throw new Error(`Cannot index into value of type "${arr.type}"`);
+    throwEvaluatorError(`Cannot index into value of type "${arr.type}"`);
   }
 
   private parseBaseFactor(): TypedValue {
@@ -453,7 +478,7 @@ export class Evaluator {
     if (token === "(") {
       const result = this.parseExpression();
       if (this.tokens[this.pos++] !== ")") {
-        throw new Error("Missing closing parenthesis");
+        throwEvaluatorError("Missing closing parenthesis");
       }
       return result;
     }
@@ -462,7 +487,7 @@ export class Evaluator {
       const factor = this.parseFactor();
       const val = this.unwrap(factor);
       if (typeof val !== "number") {
-        throw new Error("Unary minus can only be applied to numbers");
+        throwEvaluatorError("Unary minus can only be applied to numbers");
       }
       return { type: "number", value: -val };
     }
@@ -505,7 +530,7 @@ export class Evaluator {
               content += next;
             }
             if (content === "") {
-              throw new Error(`Expected argument in geometry function ${token}`);
+              throwEvaluatorError(`Expected argument in geometry function ${token}`);
             }
             return content;
           };
@@ -518,7 +543,7 @@ export class Evaluator {
             }
           }
           if (this.tokens[this.pos] !== ")") {
-            throw new Error(`Expected ')' after geometry function ${token}`);
+            throwEvaluatorError(`Expected ')' after geometry function ${token}`);
           }
           this.pos++; // consume ')'
 
@@ -562,7 +587,7 @@ export class Evaluator {
           }
 
           if (!this.context.objects) {
-            throw new Error(`Cannot resolve geometry function "${token}" without objects context`);
+            throwEvaluatorError(`Cannot resolve geometry function "${token}" without objects context`);
           }
 
           // Helper: look up an object, respecting allowUnknownGeometryObjects flag
@@ -580,7 +605,7 @@ export class Evaluator {
             }
 
             if (this.options.allowUnknownGeometryObjects) return null;
-            throw new Error(`Unknown or invalid object in ${fnName}: ${id}`);
+            throwEvaluatorError(`Unknown or invalid object in ${fnName}: ${id}`);
           };
 
           let computedVal: any;
@@ -673,7 +698,7 @@ export class Evaluator {
             const radius = Number(subEval.evaluate(args[1]));
             const angle = Number(subEval.evaluate(args[2]));
             if (Number.isNaN(radius) || Number.isNaN(angle)) {
-              throw new Error(`Invalid arguments in polar(${args.join(", ")})`);
+              throwEvaluatorError(`Invalid arguments in polar(${args.join(", ")})`);
             }
             computedVal = {
               x: center.x + radius * Math.cos(angle),
@@ -746,9 +771,9 @@ export class Evaluator {
             } else {
               const subEval = new Evaluator(this.context, this.options);
               const t = Number(subEval.evaluate(args[1]));
-              if (!Number.isFinite(t)) throw new Error(`FRAME_RESOLUTION_FAILED: parameter t must be finite, got ${t}`);
+              if (!Number.isFinite(t)) throwEvaluatorError(`FRAME_RESOLUTION_FAILED: parameter t must be finite, got ${t}`);
               if (t < 0 || t > 1) {
-                throw new Error(`FRAME_RESOLUTION_FAILED: parameter t must be between 0 and 1, got ${t}`);
+                throwEvaluatorError(`FRAME_RESOLUTION_FAILED: parameter t must be between 0 and 1, got ${t}`);
               }
               const point = this.getPointAtObject(obj, t, args[0]);
               const tangent = this.getTangentAtObject(obj, t, args[0]);
@@ -770,11 +795,11 @@ export class Evaluator {
             else {
               const subEval = new Evaluator(this.context, this.options);
               const targetLen = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(targetLen)) throw new Error(`Invalid parameter targetLength in tAtLength: ${args[1]}`);
+              if (Number.isNaN(targetLen)) throwEvaluatorError(`Invalid parameter targetLength in tAtLength: ${args[1]}`);
               computedVal = this.getTAtLengthFromObject(obj, targetLen, args[0]);
             }
           } else if (token === "intersection") {
-            if (args.length < 2) throw new Error(`intersection() requires at least 2 arguments`);
+            if (args.length < 2) throwEvaluatorError(`intersection() requires at least 2 arguments`);
             const obj1 = lookupObj(args[0], "intersection");
             const obj2 = lookupObj(args[1], "intersection");
             if (!obj1 || !obj2) computedVal = 0;
@@ -793,12 +818,12 @@ export class Evaluator {
                 } else if (raw.startsWith("nearest(") && raw.endsWith(")")) {
                   const refId = raw.slice(8, -1);
                   const refObj = this.context.objects[refId];
-                  if (!refObj) throw new Error(`Unknown reference in nearest(): ${refId}`);
+                  if (!refObj) throwEvaluatorError(`Unknown reference in nearest(): ${refId}`);
                   selector = { nearest: this.getPointFromObject(refObj) };
                 } else if (raw.startsWith("farthest(") && raw.endsWith(")")) {
                   const refId = raw.slice(9, -1);
                   const refObj = this.context.objects[refId];
-                  if (!refObj) throw new Error(`Unknown reference in farthest(): ${refId}`);
+                  if (!refObj) throwEvaluatorError(`Unknown reference in farthest(): ${refId}`);
                   selector = { farthest: this.getPointFromObject(refObj) };
                 } else if (raw.startsWith("{") && raw.endsWith("}")) {
                   // Support {index: n}
@@ -806,10 +831,10 @@ export class Evaluator {
                   if (match) {
                     selector = { index: parseInt(match[1], 10) };
                   } else {
-                    throw new Error(`Unsupported object selector: "${raw}"`);
+                    throwEvaluatorError(`Unsupported object selector: "${raw}"`);
                   }
                 } else {
-                  throw new Error(`Unknown intersection selector: "${raw}"`);
+                  throwEvaluatorError(`Unknown intersection selector: "${raw}"`);
                 }
               }
 
@@ -831,7 +856,7 @@ export class Evaluator {
         }
 
         if (this.tokens[this.pos] !== ")") {
-          throw new Error(`Expected ')' after function arguments for ${token}`);
+          throwEvaluatorError(`Expected ')' after function arguments for ${token}`);
         }
         this.pos++; // consume ')'
 
@@ -868,7 +893,7 @@ export class Evaluator {
               const res = this.context.callFunction(token, args);
               if (res !== undefined) return res;
             }
-            throw new Error(`Unknown function: ${token}`);
+            throwEvaluatorError(`Unknown function: ${token}`);
           }
         }
       }
@@ -882,7 +907,7 @@ export class Evaluator {
       if (reconstructed !== undefined) {
         const next = this.tokens[this.pos];
         if (["+", "-", "*", "/"].includes(next) && typeof reconstructed.value !== "number") {
-          throw new Error(`Identifier "${reconstructed.value}" does not resolve to a number`);
+          throwEvaluatorError(`Identifier "${reconstructed.value}" does not resolve to a number`);
         }
         return reconstructed;
       }
@@ -891,7 +916,7 @@ export class Evaluator {
         if (resolved !== undefined) {
            const next = this.tokens[this.pos];
            if (["+", "-", "*", "/"].includes(next) && typeof resolved !== "number") {
-                throw new Error(`Identifier "${token}" does not resolve to a number`);
+                throwEvaluatorError(`Identifier "${token}" does not resolve to a number`);
            }
            return this.wrap(resolved);
         }
@@ -911,7 +936,7 @@ export class Evaluator {
       if (this.options.allowUnknownIdentifiers) {
         return { type: "number", value: 1 };
       }
-      throw new Error(`Unknown identifier: ${token}. Available scalars: ${Object.keys(this.context.scalars || {}).join(", ")}`);
+      throwEvaluatorError(`Unknown identifier: ${token}. Available scalars: ${Object.keys(this.context.scalars || {}).join(", ")}`);
     }
 
     // It's a number or unit literal
@@ -927,7 +952,7 @@ export class Evaluator {
       return { type: "number", value: parseFloat(token) };
     }
 
-    throw new Error(`Invalid token: ${token}`);
+    throwEvaluatorError(`Invalid token: ${token}`);
   }
 
   private getPointFromObject(obj: any): { x: number; y: number } {
@@ -951,11 +976,11 @@ export class Evaluator {
     }
 
     if (!this.context.objects) {
-      throw new Error(`Cannot resolve point-like argument: ${arg}`);
+      throwEvaluatorError(`Cannot resolve point-like argument: ${arg}`);
     }
 
     const obj = this.context.objects[arg];
-    if (!obj) throw new Error(`Unknown object in point-like argument: ${arg}`);
+    if (!obj) throwEvaluatorError(`Unknown object in point-like argument: ${arg}`);
     return this.getPointFromObject(obj);
   }
 
@@ -971,11 +996,11 @@ export class Evaluator {
 
   private getGeometryOperationTarget(obj: any, label: string): any {
     if (!this.context.objects || !obj?.target) {
-      throw new Error(`Operation object "${label}" does not expose a resolvable target`);
+      throwEvaluatorError(`Operation object "${label}" does not expose a resolvable target`);
     }
     const target = this.context.objects[obj.target];
     if (!target) {
-      throw new Error(`Operation target "${obj.target}" not found for "${label}"`);
+      throwEvaluatorError(`Operation target "${obj.target}" not found for "${label}"`);
     }
     return target;
   }
@@ -993,7 +1018,7 @@ export class Evaluator {
 
   private validatePathParameter(t: number, label: string, query: string): void {
     if (!Number.isFinite(t) || t < 0 || t > 1) {
-      throw new Error(`INVALID_VALUE: ${query} parameter t must be between 0 and 1, got ${t} for "${label}"`);
+      throwEvaluatorError(`INVALID_VALUE: ${query} parameter t must be between 0 and 1, got ${t} for "${label}"`);
     }
   }
 
@@ -1029,7 +1054,7 @@ export class Evaluator {
     }
     if (obj.type === "arc") {
       if (obj.radius === undefined || obj.startAngle === undefined || obj.endAngle === undefined) {
-        throw new Error(`Arc "${label}" does not expose a resolvable length`);
+        throwEvaluatorError(`Arc "${label}" does not expose a resolvable length`);
       }
       return obj.radius * Math.abs(obj.endAngle - obj.startAngle);
     }
@@ -1127,9 +1152,9 @@ export class Evaluator {
           label,
         );
       }
-      throw new Error(`BOOLEAN_LENGTH_UNAVAILABLE: Boolean "${label}" does not expose a resolvable perimeter`);
+      throwEvaluatorError(`PATH_LENGTH_UNAVAILABLE: Boolean "${label}" does not expose a resolvable perimeter`);
     }
-    throw new Error(`PATH_LENGTH_UNAVAILABLE: Unknown or invalid object in length: ${label}`);
+    throwEvaluatorError(`PATH_LENGTH_UNAVAILABLE: Unknown or invalid object in length: ${label}`);
   }
 
   private getPerimeterFromObject(obj: any, label: string): number {
@@ -1138,7 +1163,7 @@ export class Evaluator {
     }
     if (obj.type === "path") {
       if (!obj.closed) {
-        throw new Error(`Path "${label}" must be closed to expose perimeter`);
+        throwEvaluatorError(`Path "${label}" must be closed to expose perimeter`);
       }
       return this.getLengthFromObject(obj, label) + this.getHolePerimeter(obj, label);
     }
@@ -1148,7 +1173,7 @@ export class Evaluator {
     if (this.isGeometryOperationObject(obj)) {
       return this.getLengthFromObject(obj, label);
     }
-    throw new Error(`Unknown or invalid object in perimeter: ${label}`);
+    throwEvaluatorError(`Unknown or invalid object in perimeter: ${label}`);
   }
 
   private getAreaFromObject(obj: any, label: string): number {
@@ -1172,7 +1197,7 @@ export class Evaluator {
     }
     if (obj.type === "path") {
       if (!obj.closed) {
-        throw new Error(`Path "${label}" must be closed to expose area`);
+        throwEvaluatorError(`Path "${label}" must be closed to expose area`);
       }
       if (Array.isArray(obj.segments) && obj.segments.length > 0) {
         return this.subtractHoleArea(this.areaFromClosedSegments(obj.segments), obj);
@@ -1185,7 +1210,7 @@ export class Evaluator {
         : this.polygonArea(obj.points ?? []);
       return this.subtractHoleArea(baseArea, obj);
     }
-    throw new Error(`Unknown or invalid object in area: ${label}`);
+    throwEvaluatorError(`Unknown or invalid object in area: ${label}`);
   }
 
   private tryGetBoundingBoxForObject(obj: any, label: string) {
@@ -1222,7 +1247,7 @@ export class Evaluator {
       const samples = this.sampleObjectBoundaryPoints(obj, label, 96);
       return this.bboxFromPoints(samples);
     }
-    throw new Error(`Unknown or invalid object in bbox query: ${label}`);
+    throwEvaluatorError(`Unknown or invalid object in bbox query: ${label}`);
   }
 
   private getPointAtObject(obj: any, t: number, label: string): { x: number; y: number } {
@@ -1270,7 +1295,7 @@ export class Evaluator {
         obj.startAngle === undefined ||
         obj.endAngle === undefined
       ) {
-        throw new Error(`Arc "${label}" does not expose a resolvable pointAt`);
+        throwEvaluatorError(`Arc "${label}" does not expose a resolvable pointAt`);
       }
       const angle = obj.startAngle + (obj.endAngle - obj.startAngle) * clamped;
       return {
@@ -1311,13 +1336,13 @@ export class Evaluator {
         return this.pointAtPolyline(obj.points, clamped, label, obj.type === "polygon");
       }
     }
-    throw new Error(`Unknown or invalid object in pointAt: ${label}`);
+    throwEvaluatorError(`Unknown or invalid object in pointAt: ${label}`);
   }
 
   private getTangentAtObject(obj: any, t: number, label: string): { x: number; y: number } {
     const length = this.getLengthFromObject(obj, label);
     if (!Number.isFinite(length) || length <= 0) {
-      throw new Error(`TANGENT_NOT_FOUND: Path "${label}" has zero length`);
+      throwEvaluatorError(`TANGENT_NOT_FOUND: Path "${label}" has zero length`);
     }
     const clamped = Math.min(Math.max(t, 0), 1);
     const EPS = 1e-6;
@@ -1346,7 +1371,7 @@ export class Evaluator {
     }
     if (obj.type === "arc") {
       if (obj.cx === undefined || obj.cy === undefined || obj.startAngle === undefined || obj.endAngle === undefined) {
-        throw new Error(`Arc "${label}" does not expose a resolvable tangentAt`);
+        throwEvaluatorError(`Arc "${label}" does not expose a resolvable tangentAt`);
       }
       const angle = obj.startAngle + (obj.endAngle - obj.startAngle) * clamped;
       const tangent = { x: -Math.sin(angle), y: Math.cos(angle) };
@@ -1374,10 +1399,10 @@ export class Evaluator {
   private getTAtLengthFromObject(obj: any, targetLen: number, label: string): number {
     const totalLen = this.getLengthFromObject(obj, label);
     if (totalLen === 0) {
-      throw new Error(`PATH_LENGTH_UNAVAILABLE: Path length is zero or unavailable for object "${label}"`);
+      throwEvaluatorError(`PATH_LENGTH_UNAVAILABLE: Path length is zero or unavailable for object "${label}"`);
     }
     if (targetLen < 0 || targetLen > totalLen) {
-      throw new Error(`INVALID_T_AT_LENGTH: targetLength must be between 0 and total length (${totalLen}), got ${targetLen}`);
+      throwEvaluatorError(`INVALID_T_AT_LENGTH: targetLength must be between 0 and total length (${totalLen}), got ${targetLen}`);
     }
     if (targetLen === 0) return 0;
     if (targetLen === totalLen) return 1;
@@ -1512,7 +1537,7 @@ export class Evaluator {
         obj.startAngle === undefined ||
         obj.endAngle === undefined
       ) {
-        throw new Error(`Arc "${label}" does not expose a resolvable closestPoint`);
+        throwEvaluatorError(`Arc "${label}" does not expose a resolvable closestPoint`);
       }
       const rawAngle = Math.atan2(ref.y - obj.cy, ref.x - obj.cx);
       const angle = this.clampAngleToArc(rawAngle, obj.startAngle, obj.endAngle);
@@ -1561,7 +1586,7 @@ export class Evaluator {
         return this.closestPointOnPointPath(ref, points, true);
       }
     }
-    throw new Error(`Unknown or invalid object in closestPoint: ${label}`);
+    throwEvaluatorError(`Unknown or invalid object in closestPoint: ${label}`);
   }
 
   private projectPointToLine(
@@ -1570,7 +1595,7 @@ export class Evaluator {
     label: string
   ): { x: number; y: number } {
     if (obj.type !== "line") {
-      throw new Error(`project() requires a line target, got ${obj.type ?? label}`);
+      throwEvaluatorError(`project() requires a line target, got ${obj.type ?? label}`);
     }
     const ax = obj.x1;
     const ay = obj.y1;
@@ -1604,12 +1629,12 @@ export class Evaluator {
         y: projected.y * 2 - point.y,
       };
     }
-    throw new Error(`reflect() requires a point or line target, got ${obj.type ?? label}`);
+    throwEvaluatorError(`reflect() requires a point or line target, got ${obj.type ?? label}`);
   }
 
   private pointAtPolyline(points: { x: number; y: number }[], t: number, label: string, closed = false) {
     const total = this.polylineLength(points, closed);
-    if (total <= 0) throw new Error(`Path "${label}" has zero length`);
+    if (total <= 0) throwEvaluatorError(`Path "${label}" has zero length`);
     let remaining = total * t;
 
     const segmentCount = closed ? points.length : points.length - 1;
@@ -1630,7 +1655,7 @@ export class Evaluator {
   private pointAtSegments(segments: any[], t: number, label: string) {
     const lengths = segments.map((segment) => this.getLengthFromObject(segment, label));
     const total = lengths.reduce((sum, value) => sum + value, 0);
-    if (total <= 0) throw new Error(`Path "${label}" has zero length`);
+    if (total <= 0) throwEvaluatorError(`Path "${label}" has zero length`);
 
     let remaining = total * t;
     for (let i = 0; i < segments.length; i++) {
@@ -2067,9 +2092,9 @@ export class Evaluator {
     objectId: string,
     direction: "world" | "local"
   ) {
-    if (!this.context.objects) throw new Error(`Cannot resolve ${direction} transform without objects context`);
+    if (!this.context.objects) throwEvaluatorError(`Cannot resolve ${direction} transform without objects context`);
     const target = this.context.objects[objectId];
-    if (!target) throw new Error(`Unknown object in ${direction === "world" ? "toWorld" : "toLocal"}: ${objectId}`);
+    if (!target) throwEvaluatorError(`Unknown object in ${direction === "world" ? "toWorld" : "toLocal"}: ${objectId}`);
     const pipeline = this.collectObjectTransformPipeline(objectId);
     if (direction === "world") {
       return applyTransformPipeline(point, pipeline as any);
@@ -2157,7 +2182,7 @@ export function validateExpressionSyntax(expression: string): void {
     }
   );
   try {
-    evaluator.evaluate(expression);
+    evaluator.validateSyntax(expression);
   } catch (error) {
     throw normalizeEvaluatorError(error, "validate");
   }

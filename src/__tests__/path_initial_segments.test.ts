@@ -74,6 +74,61 @@ objects:
           from: [0, 0]
           to: [10, 0]
           typo: [20, 0]
-`, { mode: "validate" })).toThrowError(expect.objectContaining({ code: "UNKNOWN_FIELD" }));
+    `, { mode: "validate" })).toThrowError(expect.objectContaining({ code: "UNKNOWN_FIELD" }));
+  });
+
+  it("resolves relative line segments with deterministic heading and turn", () => {
+    const shape = resolveSegments([
+      { line: { from: "A", direction: "right", forward: 10 } },
+      { line: { turn: "90deg", forward: 5 } },
+      { line: { direction: "up-right", forward: 10 } },
+    ]);
+
+    expect(shape.segments).toHaveLength(3);
+    expect(shape.segments?.[0]).toMatchObject({ x1: 0, y1: 0, x2: 10, y2: 0 });
+    expect(shape.segments?.[1]?.x2).toBeCloseTo(10);
+    expect(shape.segments?.[1]?.y2).toBeCloseTo(5);
+    expect(shape.segments?.[2]?.x2).toBeCloseTo(10 + Math.sqrt(50));
+    expect(shape.segments?.[2]?.y2).toBeCloseTo(5 - Math.sqrt(50));
+  });
+
+  it("rejects relative line boundary violations with specific diagnostics", () => {
+    expect(() => parseRelGeo(`
+version: 0.5
+objects:
+  shape:
+    type: path
+    segments:
+      - line:
+          from: [0, 0]
+          turn: 90deg
+          forward: 5
+`, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "TURTLE_HEADING_UNAVAILABLE",
+      path: "objects.shape.segments[0].line.turn",
+    }));
+
+    expect(() => parseRelGeo(`
+version: 0.5
+objects:
+  shape:
+    type: path
+    segments:
+      - line:
+          from: [0, 0]
+          direction: right
+          forward: 0
+`, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "INVALID_TURTLE_FORWARD",
+      path: "objects.shape.segments[0].line.forward",
+    }));
+
+    expect(() => resolveSegments([
+      { line: { from: "A", direction: "right", forward: 10 } },
+      { line: { turn: Number.NaN, forward: 5 } },
+    ])).toThrowError(expect.objectContaining({
+      code: "INVALID_TURTLE_TURN",
+      path: "objects.shape.segments[1].line.turn",
+    }));
   });
 });

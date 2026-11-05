@@ -1,4 +1,5 @@
 import type { ResolvedScene } from "./types";
+import { CoreError } from "./errors";
 
 export const RESOLVED_SCENE_PROJECTION_SCHEMA = "relgeo.resolved-scene" as const;
 export const RESOLVED_SCENE_PROJECTION_VERSION = 1 as const;
@@ -39,7 +40,7 @@ const NUMBER_PRECISION = 12;
 
 function normalizeNumber(value: number, path: string): number {
   if (!Number.isFinite(value)) {
-    throw new Error(`INVALID_RESOLVED_SCENE: non-finite number at ${path}`);
+    throw new CoreError(`non-finite number at ${path}`, "INVALID_RESOLVED_SCENE", { phase: "runtime", path });
   }
   const normalized = Number(value.toFixed(NUMBER_PRECISION));
   return Object.is(normalized, -0) ? 0 : normalized;
@@ -68,9 +69,37 @@ function canonicalizeSerializedSnapshot(input: string): string {
   try {
     parsed = JSON.parse(input);
   } catch (error) {
-    throw new Error(`INVALID_SEMANTIC_SNAPSHOT: expected JSON (${error instanceof Error ? error.message : String(error)})`);
+    throw new CoreError(
+      `expected JSON (${error instanceof Error ? error.message : String(error)})`,
+      "INVALID_SEMANTIC_SNAPSHOT",
+      { phase: "runtime", path: "snapshot" },
+    );
+  }
+  if (parsed && typeof parsed === "object" && "schema" in parsed) {
+    assertProjectionCompatibility(parsed as Partial<ResolvedSceneProjection>);
   }
   return JSON.stringify(canonicalize(parsed, "snapshot"));
+}
+
+function assertProjectionCompatibility(input: Partial<ResolvedSceneProjection>): void {
+  if (input.schema !== RESOLVED_SCENE_PROJECTION_SCHEMA) {
+    throw new CoreError("unsupported semantic projection schema", "INVALID_SEMANTIC_SNAPSHOT", {
+      phase: "runtime",
+      path: "projection.schema",
+    });
+  }
+  if (input.schemaVersion !== RESOLVED_SCENE_PROJECTION_VERSION) {
+    throw new CoreError("unsupported semantic projection schema version", "INVALID_SEMANTIC_SNAPSHOT", {
+      phase: "runtime",
+      path: "projection.schemaVersion",
+    });
+  }
+  if (input.compatibilityLine !== RESOLVED_SCENE_COMPATIBILITY_LINE) {
+    throw new CoreError("incompatible semantic projection compatibility line", "INVALID_SEMANTIC_SNAPSHOT", {
+      phase: "runtime",
+      path: "projection.compatibilityLine",
+    });
+  }
 }
 
 function serializeSemanticReplayInput(input: SemanticReplayInput): string {
@@ -80,6 +109,7 @@ function serializeSemanticReplayInput(input: SemanticReplayInput): string {
     && typeof input === "object"
     && (input as Partial<ResolvedSceneProjection>).schema === RESOLVED_SCENE_PROJECTION_SCHEMA
   ) {
+    assertProjectionCompatibility(input as Partial<ResolvedSceneProjection>);
     return JSON.stringify(canonicalize(input, "projection"));
   }
   return serializeResolvedScene(input as ResolvedScene);

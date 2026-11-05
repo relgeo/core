@@ -192,4 +192,28 @@ describe("inherit resolution", () => {
 
     expect(() => resolveGeometry(doc)).toThrow(/CIRCULAR_INHERIT/);
   });
+
+  it("rejects incompatible inherited value types with context", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      metaPresets: {
+        numeric: { strokeWidth: 2 },
+        textual: { strokeWidth: "2px" },
+      },
+      objects: {
+        line: {
+          type: "line",
+          from: [0, 0],
+          to: [10, 0],
+          meta: { inherit: ["numeric", "textual"] },
+        },
+      },
+    };
+
+    expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+      code: "INHERIT_TYPE_CONFLICT",
+      path: "inherit.strokeWidth",
+      phase: "resolve",
+    }));
+  });
 });

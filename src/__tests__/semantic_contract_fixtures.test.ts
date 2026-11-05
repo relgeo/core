@@ -41,7 +41,7 @@ describe("semantic contract fixtures", () => {
   it("declares the focused reference, constraint, result, and recovery matrix", () => {
     expect(fixture("v05-invalid-reference-path").coreContract).toMatchObject({
       kind: "reference-failure",
-      code: "INVALID_EXPRESSION",
+      code: "UNKNOWN_IDENTIFIER",
       path: "objects.marker.at[0]",
     });
     expect(fixture("v05-runtime-align-violation").coreContract).toMatchObject({
@@ -79,7 +79,12 @@ describe("semantic contract fixtures", () => {
     const second = resolveGeometry(doc);
 
     expect(first.objects.merged).toMatchObject({ type: "boolean", operation: "union" });
-    expect(first.objects.symmetricDifference).toMatchObject({ type: "boolean", operation: "xor" });
+    expect(first.objects.symmetricDifference).toMatchObject({
+      type: "collection",
+      children: ["symmetricDifference[0]", "symmetricDifference[1]"],
+    });
+    expect(first.objects["symmetricDifference[0]"]).toMatchObject({ type: "boolean", operation: "xor" });
+    expect(first.objects["symmetricDifference[1]"]).toMatchObject({ type: "boolean", operation: "xor" });
     for (const id of ["alongMarks", "gridMarks", "polarMarks", "eachMarks"]) {
       expect(first.objects[id]).toMatchObject({ type: "collection" });
       expect((first.objects[id] as any).children.length).toBeGreaterThan(0);
@@ -98,7 +103,7 @@ describe("semantic contract fixtures", () => {
     }
 
     expect(failure).toMatchObject({
-      code: "INVALID_EXPRESSION",
+      code: "UNKNOWN_IDENTIFIER",
       phase: "parse",
       severity: "error",
       path: "objects.marker.at[0]",

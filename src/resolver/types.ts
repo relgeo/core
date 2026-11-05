@@ -33,12 +33,14 @@ export class ResolveError extends Error implements RelGeoError {
         public code?: RelGeoErrorCode | string,
         public objectId?: string,
         public path?: string,
-        range?: SourceRange
+        range?: SourceRange,
+        dependencyChain?: string[],
     ) {
         const fullMessage = code ? `${code}: ${message}` : message;
         super(fullMessage);
         this.message = fullMessage;
         this.name = "ResolveError";
         this.range = range;
+        this.dependencyChain = dependencyChain;
     }
 }

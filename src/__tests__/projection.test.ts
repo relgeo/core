@@ -91,4 +91,41 @@ objects:
     expect(compareResolvedSceneReplay(projection, reordered).equal).toBe(false);
     expect(compareResolvedSceneReplay(projection, JSON.stringify(projection)).equal).toBe(true);
   });
+
+  it("normalizes invalid replay snapshots to the public runtime taxonomy", () => {
+    expect(() => compareResolvedSceneReplay("{not-json}", "{}"))
+      .toThrow(expect.objectContaining({
+        code: "INVALID_SEMANTIC_SNAPSHOT",
+        phase: "runtime",
+        path: "snapshot",
+      }));
+  });
+
+  it("rejects projection snapshots from an incompatible schema line", () => {
+    const scene = resolveGeometry(parseRelGeo(`version: 0.5
+objects:
+  point:
+    type: point
+    at: [0, 0]
+`));
+    const projection = projectResolvedScene(scene);
+
+    expect(() => compareResolvedSceneReplay(projection, {
+      ...projection,
+      compatibilityLine: "0.4",
+    } as unknown as typeof projection)).toThrow(expect.objectContaining({
+      code: "INVALID_SEMANTIC_SNAPSHOT",
+      phase: "runtime",
+      path: "projection.compatibilityLine",
+    }));
+
+    expect(() => compareResolvedSceneReplay(
+      JSON.stringify({ ...projection, schemaVersion: 2 }),
+      JSON.stringify(projection),
+    )).toThrow(expect.objectContaining({
+      code: "INVALID_SEMANTIC_SNAPSHOT",
+      phase: "runtime",
+      path: "projection.schemaVersion",
+    }));
+  });
 });

@@ -27,6 +27,19 @@ export type ExpressionValue = string | number;
 export type ObjectRef = string;
 export type AnchorRef = string | number | [ExpressionValue, ExpressionValue];
 
+/** JSON-shaped extension data accepted by the public semantic model. */
+export type SemanticValue =
+  | string
+  | number
+  | boolean
+  | null
+  | SemanticValue[]
+  | { [key: string]: SemanticValue };
+
+export type ParameterValue = ParameterDef | SemanticValue;
+export type ConstantValue = ConstantDef | SemanticValue;
+export type HoleValue = { segments: PathSegment[] } | string | SemanticValue;
+
 export type RelGeoObjectType =
   | "point"
   | "line"
@@ -206,7 +219,7 @@ export interface PlaceableObject extends BaseObject {
 export interface RectObject extends PlaceableObject {
   type: "rect";
   size: [ExpressionValue, ExpressionValue];
-  holes?: ({ segments: PathSegment[] } | string | any)[];
+  holes?: HoleValue[];
 }
 
 export interface CircleObject extends PlaceableObject {
@@ -214,7 +227,7 @@ export interface CircleObject extends PlaceableObject {
   center?: AnchorRef;
   radius?: ExpressionValue;
   through?: AnchorRef;
-  holes?: ({ segments: PathSegment[] } | string | any)[];
+  holes?: HoleValue[];
 }
 
 export interface EllipseObject extends PlaceableObject {
@@ -224,7 +237,7 @@ export interface EllipseObject extends PlaceableObject {
   ry?: ExpressionValue;
   size?: [ExpressionValue, ExpressionValue];
   rotation?: ExpressionValue;
-  holes?: ({ segments: PathSegment[] } | string | any)[];
+  holes?: HoleValue[];
 }
 
 export interface ArcObject extends PlaceableObject {
@@ -327,7 +340,7 @@ export interface TextObject extends PlaceableObject {
 }
 
 export type PathSegment =
-  | { line: { from?: AnchorRef; to: AnchorRef } }
+  | { line: { from?: AnchorRef; to?: AnchorRef; direction?: Direction | "up-right" | "up-left" | "down-right" | "down-left" | ExpressionValue; turn?: ExpressionValue; forward?: ExpressionValue } }
   | { arc: { from?: AnchorRef; through: AnchorRef; to: AnchorRef } }
   | { quadratic: { from?: AnchorRef; cp: AnchorRef; to: AnchorRef } }
   | { cubic: { from?: AnchorRef; cp1: AnchorRef; cp2: AnchorRef; to: AnchorRef } };
@@ -348,7 +361,7 @@ export interface PathObject extends PlaceableObject {
   };
   corners?: Record<string, { fillet?: ExpressionValue; chamfer?: ExpressionValue }>;
   corner?: { all?: { fillet?: ExpressionValue; chamfer?: ExpressionValue } } ;
-  holes?: ({ segments: PathSegment[] } | string | any)[];
+  holes?: HoleValue[];
 }
 
 export interface PolygonObject extends PlaceableObject {
@@ -356,7 +369,7 @@ export interface PolygonObject extends PlaceableObject {
   points: AnchorRef[];
   corner?: { all?: { fillet?: ExpressionValue; chamfer?: ExpressionValue } };
   corners?: Record<string, { fillet?: ExpressionValue; chamfer?: ExpressionValue }>;
-  holes?: ({ segments: PathSegment[] } | string | any)[];
+  holes?: HoleValue[];
 }
 
 export interface CloneObject extends PlaceableObject {
@@ -443,7 +456,7 @@ export interface RepeatAlongDef {
 export interface RepeatObject extends BaseObject {
   type: "repeat";
   count?: ExpressionValue;
-  each?: any;
+  each?: SemanticValue;
   grid?: RepeatGridDef;
   polar?: RepeatPolarDef;
   along?: RepeatAlongDef;
@@ -469,11 +482,11 @@ export interface ComponentInstanceObject extends BaseObject {
   params?: Record<string, unknown>;
   place?: Record<string, unknown>;
   on?: OnSpec;
-  transform?: any[];
+  transform?: SemanticValue[];
 }
 
 export interface ComponentDefinition {
-  parameters?: Record<string, ParameterDef | any>;
+  parameters?: Record<string, ParameterValue>;
   derived?: Record<string, string | DerivedDef>;
   objects: Record<string, RelGeoObject>;
   exports?: Record<string, ExpressionValue>;
@@ -569,7 +582,7 @@ export interface ViewDefinition {
   filter?: {
     roles?: string[];
   };
-  meta?: Record<string, any>;
+  meta?: Record<string, SemanticValue>;
 }
 
 export interface SheetViewPlacement {
@@ -578,21 +591,21 @@ export interface SheetViewPlacement {
     topLeft?: [string | number, string | number] | string | number[];
     center?: [string | number, string | number] | string | number[];
   };
-  meta?: Record<string, any>;
+  meta?: Record<string, SemanticValue>;
 }
 
 export interface SheetDefinition {
   size: string | [string | number, string | number];
   orientation?: "portrait" | "landscape";
   views?: SheetViewPlacement[];
-  meta?: Record<string, any>;
+  meta?: Record<string, SemanticValue>;
 }
 
 export interface RelGeoDocument {
   version?: string | number;
   scene?: Scene;
-  parameters?: Record<string, ParameterDef | any>;
-  constants?: Record<string, ConstantDef | any>;
+  parameters?: Record<string, ParameterValue>;
+  constants?: Record<string, ConstantValue>;
   derived?: Record<string, DerivedDef | string>;
   profiles?: Record<string, Record<string, unknown>>;
   metaPresets?: Record<string, Record<string, unknown>>;
@@ -636,6 +649,9 @@ export const REL_GEO_ERROR_CODES = [
   "UNSUPPORTED_FEATURE",
   "CONSTRAINT_VIOLATION",
   "INVALID_GEOMETRY_OPERATION",
+  "INVALID_OPERATION_TARGET",
+  "INVALID_SCALE_FACTOR",
+  "INVALID_MIRROR_AXIS",
   "PATH_NOT_CLOSED",
   "PATH_JOIN_GAP",
   "PATH_JOIN_DIRECTION_MISMATCH",
@@ -648,6 +664,7 @@ export const REL_GEO_ERROR_CODES = [
   "INVALID_JOIN_TARGET",
   "INVALID_CLOSE_WITH",
   "INVALID_OFFSET",
+  "INVALID_TRANSFORM",
   "DEGENERATE_ARC",
   "SELF_INTERSECTING_PATH",
   "INVALID_CORNER_OPERATION",
@@ -669,6 +686,7 @@ export const REL_GEO_ERROR_CODES = [
   "CIRCULAR_INHERIT",
   "RESOLVE_ERROR",
   "INVALID_RESOLVED_SCENE",
+  "INVALID_SEMANTIC_SNAPSHOT",
   "DIMENSION_TARGET_INVALID",
   "ANNOTATION_TARGET_INVALID",
   "INVALID_REPEAT_COUNT",
@@ -686,6 +704,12 @@ export const REL_GEO_ERROR_CODES = [
   "DEGENERATE_SPLIT",
   "SPLIT_RESOLUTION_FAILED",
   "INVALID_CLOSED_SHAPE",
+  "INVALID_HOLE_SHAPE",
+  "TURTLE_HEADING_UNAVAILABLE",
+  "INVALID_TURTLE_FORWARD",
+  "INVALID_TURTLE_TURN",
+  "REPEAT_ALONG_LENGTH_FAILED",
+  "INHERIT_TYPE_CONFLICT",
   "MISSING_CLONE_TARGET",
 ] as const;
 
@@ -701,6 +725,10 @@ export interface RelGeoError {
   phase?: RelGeoDiagnosticPhase;
   severity?: RelGeoDiagnosticSeverity;
   range?: SourceRange;
+  constraintType?: string;
+  origin?: string;
+  expected?: unknown;
+  actual?: unknown;
 }
 
 /** Stable machine-readable diagnostic returned by the aggregation boundary. */

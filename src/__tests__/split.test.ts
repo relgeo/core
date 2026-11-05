@@ -35,6 +35,36 @@ objects:
     expect(() => new Validator(doc, "validate").validate()).toThrow("INVALID_VALUE");
   });
 
+  it("rejects statically known non-path and closed split targets during validation", () => {
+    const nonPath = {
+      version: 0.5,
+      objects: {
+        box: { type: "rect", size: [10, 10], place: { topLeft: [0, 0] } },
+        cut: { type: "split", target: "box", at: [2, 2] },
+      },
+    } as any;
+    expect(() => new Validator(nonPath, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_SPLIT_TARGET",
+      path: "objects.cut.target",
+    }));
+
+    const closedPath = {
+      version: 0.5,
+      objects: {
+        shape: {
+          type: "path",
+          closed: true,
+          points: [[0, 0], [10, 0], [10, 10], [0, 10]],
+        },
+        cut: { type: "split", target: "shape", at: [5, 0] },
+      },
+    } as any;
+    expect(() => new Validator(closedPath, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_SPLIT_TARGET",
+      path: "objects.cut.target",
+    }));
+  });
+
   it("resolves split without pick as a collection of two path pieces", () => {
     const resolved = resolveGeometry({
       version: 0.5,

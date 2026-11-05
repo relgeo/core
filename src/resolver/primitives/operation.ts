@@ -51,6 +51,11 @@ const SPLITTABLE_OPERATION_TARGET_TYPES = new Set([
     "scale",
     "mirror",
 ]);
+const GEOMETRY_OPERATION_TARGET_TYPES = new Set([
+    "point", "line", "rect", "circle", "ellipse", "arc", "quadratic", "cubic",
+    "path", "polygon", "boolean", "group", "clone", "translate", "rotate",
+    "scale", "mirror", "reverse", "split",
+]);
 
 function resolveOperationOrigin(
     obj: GeometryOperationObject,
@@ -125,6 +130,15 @@ export function resolveGeometryOperationObject(
         );
     }
 
+    if (obj.type !== "reverse" && obj.type !== "split" && !GEOMETRY_OPERATION_TARGET_TYPES.has(target.type)) {
+        throw new ResolveError(
+            `${obj.type} target "${obj.target}" is not a geometry object`,
+            "INVALID_OPERATION_TARGET",
+            id,
+            "target",
+        );
+    }
+
     if (obj.type === "split") {
         return resolveSplitOperationObject(id, obj, target, ctx);
     }
@@ -148,7 +162,7 @@ export function resolveGeometryOperationObject(
             origin: resolveOperationOrigin(obj, bbox, ctx),
         };
     } else if (obj.type === "scale") {
-        const factor = Array.isArray(obj.factor)
+    const factor = Array.isArray(obj.factor)
             ? [
                 evaluateExpression(obj.factor[0], evalCtx),
                 evaluateExpression(obj.factor[1], evalCtx),
@@ -157,6 +171,14 @@ export function resolveGeometryOperationObject(
                 evaluateExpression(obj.factor, evalCtx),
                 evaluateExpression(obj.factor, evalCtx),
             ];
+        if (factor.some(value => !Number.isFinite(value) || value <= 0)) {
+            throw new ResolveError(
+                `scale operation "${id}" requires finite, positive factors`,
+                "INVALID_SCALE_FACTOR",
+                id,
+                "factor",
+            );
+        }
         transform = {
             type: "scale" as const,
             factor,

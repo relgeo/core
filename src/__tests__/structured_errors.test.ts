@@ -3,6 +3,11 @@ import { parseRelGeo } from "../parser";
 import { resolveGeometry, ResolveError } from "../resolver";
 import { ValidationError, Validator } from "../validator";
 import { CoreError } from "../errors";
+import { resolveBoolean } from "../resolver/primitives/shapes";
+import { createEvalContext } from "../resolver/eval-context";
+import { defaultTextMetricsProvider } from "../types";
+import { evaluateExpression } from "../evaluator";
+import { toDiagnostic } from "../errors";
 
 describe("structured resolver errors", () => {
   it("preserves geometry-owned diagnostic codes at the resolver boundary", () => {
@@ -15,6 +20,18 @@ describe("structured resolver errors", () => {
       phase: "resolve",
     });
     expect(error.message).toContain("INVALID_TRANSFORM");
+  });
+
+  it("keeps geometry transform failures registered at the public boundary", () => {
+    const diagnostic = toDiagnostic(new Error("INVALID_TRANSFORM: transform contains a non-finite value"), {
+      phase: "resolve",
+    });
+
+    expect(diagnostic).toMatchObject({
+      code: "INVALID_TRANSFORM",
+      phase: "resolve",
+      message: "transform contains a non-finite value",
+    });
   });
 
   it("normalizes uncategorized resolver exceptions with object context", () => {
@@ -80,6 +97,45 @@ objects:
       expect(error).toBeInstanceOf(ValidationError);
       expect((error as ValidationError).code).toBeTruthy();
       expect((error as Error).message).not.toBe("[object Object]");
+    }
+  });
+
+  it("preserves evaluator semantic codes when validator checks expressions", () => {
+    const cases = [
+      {
+        doc: {
+          version: "0.5",
+          objects: { point: { type: "point", at: "missing" } },
+        },
+        code: "UNKNOWN_IDENTIFIER",
+      },
+      {
+        doc: {
+          version: "0.5",
+          objects: {
+            panel: { type: "rect", size: [10, 10], place: { topLeft: [0, 0] } },
+            point: { type: "point", at: "panel.notAnAnchor" },
+          },
+        },
+        code: "UNKNOWN_ANCHOR",
+      },
+      {
+        doc: {
+          version: "0.5",
+          objects: {
+            path: { type: "path", points: [[0, 0], [10, 0]], closed: false },
+            point: { type: "point", at: "path.area" },
+          },
+        },
+        code: "PATH_NOT_CLOSED",
+      },
+    ] as const;
+
+    for (const { doc, code } of cases) {
+      expect(() => new Validator(doc as any).validate()).toThrowError(expect.objectContaining({
+        code,
+        phase: "validate",
+      }));
     }
   });
 
@@ -177,6 +233,150 @@ objects:
       phase: "runtime",
       objectId: "broken",
       path: "objects.broken",
+    }));
+  });
+
+  it("keeps boolean operand lookup failures structured in editor resolution", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        broken: { type: "boolean", operation: "union", shapes: ["missing"] },
+      },
+    } as any;
+
+    expect(() => resolveBoolean("broken", doc.objects.broken, {
+      scalars: {},
+      objects: {},
+      targetUnit: "px",
+      mode: "validate",
+      textMetrics: defaultTextMetricsProvider,
+    })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_REFERENCE",
+      phase: "resolve",
+      objectId: "broken",
+      path: "objects.broken.shapes",
+    }));
+  });
+
+  it("classifies collection function type errors instead of leaking raw exceptions", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        broken: { type: "point", at: ["count(1)", 0] },
+      },
+    } as any;
+
+    const context = createEvalContext({
+      scalars: {},
+      objects: {},
+      targetUnit: "px",
+      mode: "validate",
+      textMetrics: defaultTextMetricsProvider,
+    });
+    expect(() => evaluateExpression("count(1)", context)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      phase: "resolve",
+    }));
+  });
+
+  it("rejects invalid numeric path offsets at the validation boundary", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        source: { type: "path", points: [[0, 0], [10, 0]] },
+        shifted: {
+          type: "path",
+          offset: { from: "source", distance: -1 },
+        },
+      },
+    } as any;
+
+    expect(() => new Validator(doc, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_OFFSET",
+      phase: "validate",
+      path: "objects.shifted.offset.distance",
+    }));
+  });
+
+  it("keeps scale and mirror validation codes specific", () => {
+    const invalidScale = {
+      version: "0.5",
+      objects: {
+        source: { type: "point", at: [0, 0] },
+        scaled: { type: "scale", target: "source", factor: 0 },
+      },
+    } as any;
+    const invalidMirror = {
+      version: "0.5",
+      objects: {
+        source: { type: "point", at: [0, 0] },
+        mirrored: { type: "mirror", target: "source", axis: "diagonal" },
+      },
+    } as any;
+    const invalidHole = {
+      version: "0.5",
+      objects: {
+        panel: {
+          type: "rect",
+          size: [10, 10],
+          holes: [{ triangle: { points: [[1, 1], [2, 1], [1, 2]] } }],
+        },
+      },
+    } as any;
+    const invalidOperationTarget = {
+      version: "0.5",
+      objects: {
+        note: { type: "text", content: "not geometry", at: [0, 0] },
+        shifted: { type: "translate", target: "note", by: [1, 0] },
+      },
+    } as any;
+
+    expect(() => new Validator(invalidScale, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_SCALE_FACTOR",
+      path: "objects.scaled.factor",
+      phase: "validate",
+    }));
+    expect(() => new Validator(invalidMirror, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_MIRROR_AXIS",
+      path: "objects.mirrored.axis",
+      phase: "validate",
+    }));
+    expect(() => new Validator(invalidHole, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_HOLE_SHAPE",
+      path: "objects.panel.holes[0]",
+      phase: "validate",
+    }));
+    expect(() => new Validator(invalidOperationTarget, "validate").validate()).toThrowError(expect.objectContaining({
+      code: "INVALID_OPERATION_TARGET",
+      path: "objects.shifted.target",
+      phase: "validate",
+    }));
+    expect(() => resolveGeometry(invalidScale, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "INVALID_SCALE_FACTOR",
+      objectId: "scaled",
+      path: "factor",
+      phase: "resolve",
+    }));
+  });
+
+  it("classifies repeat-along length failures with repeat context", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        target: { type: "point", at: [0, 0] },
+        repeated: {
+          type: "repeat",
+          along: { target: "target", spacing: "uniform-length", count: 2 },
+          item: { type: "point", at: [0, 0] },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "REPEAT_ALONG_LENGTH_FAILED",
+      objectId: "repeated",
+      path: "objects.repeated.along",
+      phase: "resolve",
     }));
   });
 });

@@ -88,7 +88,25 @@ describe("Dependency Ordering v0.3", () => {
       A: { type: "point", at: "B" },
     };
 
-    expect(() => sortObjects(firstOrder)).toThrow("Circular dependency detected: A -> B -> A");
-    expect(() => sortObjects(secondOrder)).toThrow("Circular dependency detected: A -> B -> A");
+    try {
+      sortObjects(firstOrder);
+      throw new Error("expected circular dependency");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "CIRCULAR_DEPENDENCY",
+        path: "objects.A",
+        dependencyChain: ["A", "B", "A"],
+      });
+    }
+    try {
+      sortObjects(secondOrder);
+      throw new Error("expected circular dependency");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "CIRCULAR_DEPENDENCY",
+        path: "objects.A",
+        dependencyChain: ["A", "B", "A"],
+      });
+    }
   });
 });

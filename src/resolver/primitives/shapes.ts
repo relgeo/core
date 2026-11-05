@@ -10,6 +10,7 @@ import {
     ResolvedPath,
     ResolvedPolygon,
     ResolvedBoolean,
+    ResolvedCollection,
     BooleanObject,
     PathResolvedSegment,
     RectObject,
@@ -36,6 +37,7 @@ import { normalizeUnit } from "../../units";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";
 import { ResolveContext, ResolveError } from "../types";
+import { stripErrorCodePrefix } from "../../errors";
 import { resolveAnchorValue } from "../anchors";
 import { applyTransformPipeline } from "../transform-utils";
 import { wrapError, resolveCustomAnchors, applyObjectPlacementAndTransform } from "./utils";
@@ -1434,6 +1436,52 @@ export function resolvePolygon(id: string, obj: PolygonObject, ctx: ResolveConte
 function resolveSegmentsInternal(objSegments: PathSegment[], ctx: ResolveContext): PathResolvedSegment[] {
     const segments: PathResolvedSegment[] = [];
     let currentPoint: { x: number; y: number } | undefined;
+    let currentHeading: number | undefined;
+
+    const resolveRelativeHeading = (direction: unknown): number => {
+        const directions: Record<string, number> = {
+            right: 0,
+            "up-right": -Math.PI / 4,
+            up: -Math.PI / 2,
+            "up-left": -3 * Math.PI / 4,
+            left: Math.PI,
+            "down-left": 3 * Math.PI / 4,
+            down: Math.PI / 2,
+            "down-right": Math.PI / 4,
+        };
+        if (typeof direction === "string" && direction in directions) return directions[direction];
+        try {
+            const value = Number(evaluateExpression(direction as string | number, createEvalContext(ctx)));
+            if (!Number.isFinite(value)) {
+                throw new ResolveError("direction must be finite", "INVALID_TURTLE_TURN");
+            }
+            return value;
+        } catch (error) {
+            throw new ResolveError(
+                stripErrorCodePrefix(error instanceof Error ? error.message : String(error)),
+                "INVALID_TURTLE_TURN",
+                ctx.currentObjectId || "",
+                `segments[${segments.length}].line.direction`,
+            );
+        }
+    };
+
+    const resolveRelativeLength = (forward: string | number, index: number): number => {
+        try {
+            const value = Number(normalizeUnit(evaluateExpression(forward, createEvalContext(ctx)), ctx.targetUnit));
+            if (!Number.isFinite(value) || value <= 0) {
+                throw new ResolveError("forward must be finite and positive", "INVALID_TURTLE_FORWARD");
+            }
+            return value;
+        } catch (error) {
+            throw new ResolveError(
+                stripErrorCodePrefix(error instanceof Error ? error.message : String(error)),
+                "INVALID_TURTLE_FORWARD",
+                ctx.currentObjectId || "",
+                `segments[${index}].line.forward`,
+            );
+        }
+    };
 
     objSegments.forEach((segment, index) => {
         if ("line" in segment) {
@@ -1444,7 +1492,62 @@ function resolveSegmentsInternal(objSegments: PathSegment[], ctx: ResolveContext
             if (!from) {
                 throw new ResolveError("First line segment requires an explicit from point", "MISSING_REQUIRED_FIELD");
             }
-            const to = resolvePointRef(segment.line.to, ctx);
+            const isRelativeLine = segment.line.forward !== undefined || segment.line.turn !== undefined ||
+                (segment.line.direction !== undefined && segment.line.to === undefined);
+            let to: { x: number; y: number };
+            if (isRelativeLine) {
+                let heading = currentHeading;
+                if (segment.line.direction !== undefined) heading = resolveRelativeHeading(segment.line.direction);
+                if (segment.line.turn !== undefined) {
+                    if (heading === undefined) {
+                        throw new ResolveError(
+                            "Relative line turn requires an existing heading",
+                            "TURTLE_HEADING_UNAVAILABLE",
+                            ctx.currentObjectId || "",
+                            `segments[${index}].line.turn`,
+                        );
+                    }
+                    try {
+                        const turn = Number(evaluateExpression(segment.line.turn, createEvalContext(ctx)));
+                        if (!Number.isFinite(turn)) {
+                            throw new ResolveError("turn must be finite", "INVALID_TURTLE_TURN");
+                        }
+                        heading += turn;
+                    } catch (error) {
+                        throw new ResolveError(
+                            stripErrorCodePrefix(error instanceof Error ? error.message : String(error)),
+                            "INVALID_TURTLE_TURN",
+                            ctx.currentObjectId || "",
+                            `segments[${index}].line.turn`,
+                        );
+                    }
+                }
+                if (heading === undefined) {
+                    throw new ResolveError(
+                        "Relative line requires a direction or existing heading",
+                        "TURTLE_HEADING_UNAVAILABLE",
+                        ctx.currentObjectId || "",
+                        `segments[${index}].line`,
+                    );
+                }
+                if (segment.line.forward === undefined) {
+                    throw new ResolveError(
+                        "Relative line requires forward",
+                        "INVALID_TURTLE_FORWARD",
+                        ctx.currentObjectId || "",
+                        `segments[${index}].line.forward`,
+                    );
+                }
+                const distance = resolveRelativeLength(segment.line.forward, index);
+                to = { x: from.x + Math.cos(heading) * distance, y: from.y + Math.sin(heading) * distance };
+                currentHeading = heading;
+            } else {
+                if (segment.line.to === undefined) {
+                    throw new ResolveError("Line segment requires an explicit to point", "MISSING_REQUIRED_FIELD", ctx.currentObjectId || "", `segments[${index}].line.to`);
+                }
+                to = resolvePointRef(segment.line.to, ctx);
+                currentHeading = Math.atan2(to.y - from.y, to.x - from.x);
+            }
             segments.push({
                 type: "line",
                 x1: from.x,
@@ -1454,6 +1557,7 @@ function resolveSegmentsInternal(objSegments: PathSegment[], ctx: ResolveContext
             });
             currentPoint = to;
         } else if ("arc" in segment) {
+            currentHeading = undefined;
             if (index > 0 && segment.arc.from !== undefined) {
                 throw new ResolveError(`"from" is only allowed on the first path segment`, "UNKNOWN_FIELD", ctx.currentObjectId || "", `segments[${index}].arc.from`);
             }
@@ -1493,6 +1597,7 @@ function resolveSegmentsInternal(objSegments: PathSegment[], ctx: ResolveContext
             });
             currentPoint = to;
         } else if ("quadratic" in segment) {
+            currentHeading = undefined;
             if (index > 0 && segment.quadratic.from !== undefined) {
                 throw new ResolveError(`"from" is only allowed on the first path segment`, "UNKNOWN_FIELD", ctx.currentObjectId || "", `segments[${index}].quadratic.from`);
             }
@@ -1511,6 +1616,7 @@ function resolveSegmentsInternal(objSegments: PathSegment[], ctx: ResolveContext
             });
             currentPoint = to;
         } else if ("cubic" in segment) {
+            currentHeading = undefined;
             if (index > 0 && segment.cubic.from !== undefined) {
                 throw new ResolveError(`"from" is only allowed on the first path segment`, "UNKNOWN_FIELD", ctx.currentObjectId || "", `segments[${index}].cubic.from`);
             }
@@ -1901,7 +2007,7 @@ function translateSegment(s: PathResolvedSegment, dx: number, dy: number): PathR
     };
 }
 
-export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveContext): ResolvedBoolean {
+export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveContext): ResolvedBoolean | ResolvedCollection {
     const engine = new ClipperBooleanEngine();
     let polyResults: PolyWithHoles[] = [];
     const path = `objects.${id}`;
@@ -1935,10 +2041,10 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
                 );
             }
             const baseObj = ctx.objects[raw.base];
-            if (!baseObj) throw new Error(`Unknown base object for subtract: ${raw.base}`);
+            if (!baseObj) throw new ResolveError(`Unknown base object for subtract: ${raw.base}`, "UNKNOWN_REFERENCE", id, `${path}.base`);
             const toolObjs = (raw.tools || []).map((tId: string) => {
                 const tObj = ctx.objects[tId];
-                if (!tObj) throw new Error(`Unknown tool object for subtract: ${tId}`);
+                if (!tObj) throw new ResolveError(`Unknown tool object for subtract: ${tId}`, "UNKNOWN_REFERENCE", id, `${path}.tools`);
                 return tObj;
             });
             polyResults = engine.subtract(
@@ -1957,7 +2063,7 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
             }
             const operandObjs = (raw.shapes || []).map((sId: string) => {
                 const sObj = ctx.objects[sId];
-                if (!sObj) throw new Error(`Unknown shape operand for boolean: ${sId}`);
+                if (!sObj) throw new ResolveError(`Unknown shape operand for boolean: ${sId}`, "UNKNOWN_REFERENCE", id, `${path}.shapes`);
                 return sObj;
             });
             const normalizedOperands = operandObjs.map((o: any) => normalizeClosedShape(o, ctx.objects));
@@ -1972,6 +2078,10 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
     } catch (e: any) {
         if (ctx.mode !== "editor") {
             if (e instanceof ResolveError) throw e;
+            if (typeof e?.code === "string") {
+                const message = String(e.message || e).replace(/^[A-Z][A-Z0-9_]*:\s*/, "");
+                throw new ResolveError(message, e.code, id, path);
+            }
             throw new ResolveError(e.message, "BOOLEAN_FAILED", id, path);
         }
     }
@@ -2036,6 +2146,45 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
     const translatedHoles = holes.map(h => ({
         segments: h.segments.map(s => translateSegment(s, dx, dy))
     }));
+
+    // v0.5 makes the result mode part of the runtime type contract: a
+    // multipart boolean requested as `multi` is an ordered collection of
+    // closed-shape children. Keep the v0.4 flattened boolean behavior for
+    // compatibility with documents that predate collection result modes.
+    const isActiveCollectionContract = Number(ctx.doc?.version ?? 0) >= 0.5;
+    if (mode === "multi" && isActiveCollectionContract) {
+        const children: string[] = [];
+        for (let index = 0; index < polyResults.length; index += 1) {
+            const island = polyResults[index];
+            const childId = `${id}[${index}]`;
+            const childPoints = island.outer.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+            const childSegments = polyToSegments(island.outer).map((segment) => translateSegment(segment, dx, dy));
+            const childHoles = (island.holes ?? []).map((hole) => ({
+                segments: polyToSegments(hole).map((segment) => translateSegment(segment, dx, dy)),
+            }));
+            ctx.objects[childId] = {
+                id: childId,
+                type: "boolean",
+                operation: obj.operation,
+                points: childPoints,
+                segments: childSegments,
+                holes: childHoles,
+                meta: obj.meta,
+            } satisfies ResolvedBoolean;
+            children.push(childId);
+        }
+
+        const resolvedCollection: ResolvedCollection = {
+            id,
+            type: "collection",
+            children,
+            transform: resolvedTransform,
+            meta: obj.meta,
+        };
+        const collectionBbox = getPathBBox(translatedPoints);
+        resolvedCollection.anchors = resolveCustomAnchors(obj, resolvedCollection as any, ctx, collectionBbox);
+        return resolvedCollection;
+    }
 
     const resolved: ResolvedBoolean = {
         id,

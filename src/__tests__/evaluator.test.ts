@@ -62,7 +62,14 @@ describe("evaluator", () => {
   });
 
   it("should reject trailing tokens in malformed expressions", () => {
-    expect(() => evaluateExpression("10 foo", ctx)).toThrow("Unexpected token: foo");
+    expect(() => evaluateExpression("10 foo", ctx)).toThrowError(expect.objectContaining({
+      code: "INVALID_EXPRESSION",
+      phase: "resolve",
+    }));
+    expect(() => validateExpressionSyntax("10 foo")).toThrowError(expect.objectContaining({
+      code: "INVALID_EXPRESSION",
+      phase: "validate",
+    }));
   });
 
   it("should reject invalid operators", () => {

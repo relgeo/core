@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { resolveGeometry } from "../resolver";
+import { resolveBoolean } from "../resolver/primitives/shapes";
 import { evaluateExpression } from "../evaluator";
 import { createEvalContext } from "../resolver/eval-context";
-import type { RelGeoDocument, ResolvedBoolean } from "../types";
+import { defaultTextMetricsProvider, type RelGeoDocument, type ResolvedBoolean, type ResolvedCollection } from "../types";
 
 const mockTextMetrics = {
   measureText: (text: string) => ({ width: text.length * 10, height: 12 }),
@@ -178,6 +179,79 @@ describe("v0.4: Robust 2D Closed-Shape Boolean Operations", () => {
     expect(() => resolveGeometry(doc)).toThrow("BOOLEAN_MULTIPART_RESULT");
   });
 
+  it("rejects invalid Boolean result modes before topology resolution", () => {
+    const doc = {
+      version: 0.5,
+      objects: {
+        left: { type: "rect", size: [10, 10] },
+        invalid: {
+          type: "boolean",
+          operation: "union",
+          shapes: ["left"],
+          result: { mode: "many" },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc)).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      path: "objects.invalid.result.mode",
+    }));
+  });
+
+  it("rejects open and non-shape Boolean operands at validation paths", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        edge: { type: "line", from: [0, 0], to: [10, 0] },
+        merged: { type: "boolean", operation: "union", shapes: ["edge"] },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      path: "objects.merged.shapes[0]",
+    }));
+  });
+
+  it("fails cyclic clone operands deterministically instead of recursing", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        first: { type: "clone", of: "second" },
+        second: { type: "clone", of: "first" },
+        merged: { type: "boolean", operation: "union", shapes: ["first"] },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      path: "objects.merged.shapes[0]",
+    }));
+  });
+
+  it("preserves geometry closed-shape codes for editor-mode direct resolution", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        edge: { type: "line", from: [0, 0], to: [10, 0] },
+        merged: { type: "boolean", operation: "union", shapes: ["edge"] },
+      },
+    } as any;
+
+    expect(() => resolveBoolean("merged", doc.objects!.merged as any, {
+      scalars: {},
+      objects: doc.objects as any,
+      targetUnit: "px",
+      mode: "validate",
+      textMetrics: defaultTextMetricsProvider,
+    })).toThrowError(expect.objectContaining({
+      code: "INVALID_CLOSED_SHAPE",
+      path: "objects.merged",
+      objectId: "merged",
+    }));
+  });
+
   it("successfully resolves multipart shape in multi mode", () => {
     const doc: RelGeoDocument = {
       version: 0.4,
@@ -207,6 +281,39 @@ describe("v0.4: Robust 2D Closed-Shape Boolean Operations", () => {
 
     // Outer area of two 100x40 rectangles is 8000
     expect(evaluateExpression("cutResult.area", evalCtx)).toBeCloseTo(8000);
+  });
+
+  it("uses the v0.5 collection contract for ordered boolean multi results", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        left: { type: "rect", size: [10, 10], place: { left: 0, top: 0 } },
+        right: { type: "rect", size: [10, 10], place: { left: 5, top: 0 } },
+        symmetricDifference: {
+          type: "boolean",
+          operation: "xor",
+          shapes: ["left", "right"],
+          result: { mode: "multi" },
+        },
+      },
+    };
+
+    const res = resolveGeometry(doc);
+    const collection = res.objects.symmetricDifference as ResolvedCollection;
+    expect(collection.type).toBe("collection");
+    expect(collection.children).toEqual(["symmetricDifference[0]", "symmetricDifference[1]"]);
+    expect(res.objects[collection.children[0]]?.type).toBe("boolean");
+    expect(res.objects[collection.children[1]]?.type).toBe("boolean");
+
+    const evalCtx = createEvalContext({
+      scalars: {},
+      objects: res.objects,
+      targetUnit: "px",
+      textMetrics: mockTextMetrics,
+    });
+    expect(evaluateExpression("count(symmetricDifference)", evalCtx)).toBe(2);
+    expect(evaluateExpression("area(first(symmetricDifference))", evalCtx)).toBeCloseTo(50);
+    expect(evaluateExpression("area(last(symmetricDifference))", evalCtx)).toBeCloseTo(50);
   });
 
   it("resolves first-class primitive shapes and references inside holes array of a path", () => {

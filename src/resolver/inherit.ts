@@ -36,9 +36,25 @@ function lookupStructuredSource(
 function shallowMergeMaps(sources: Array<Record<string, unknown>>): Record<string, unknown> {
     const merged: Record<string, unknown> = {};
     for (const source of sources) {
+        for (const [key, value] of Object.entries(source)) {
+            if (key in merged && valueKind(merged[key]) !== valueKind(value)) {
+                throw new ResolveError(
+                    `Inherited key "${key}" has incompatible value types`,
+                    "INHERIT_TYPE_CONFLICT",
+                    undefined,
+                    `inherit.${key}`,
+                );
+            }
+        }
         Object.assign(merged, source);
     }
     return merged;
+}
+
+function valueKind(value: unknown): string {
+    if (value === null) return "null";
+    if (Array.isArray(value)) return "array";
+    return typeof value;
 }
 
 function resolveStructuredSource(

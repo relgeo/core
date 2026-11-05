@@ -511,6 +511,33 @@ objects:
             expect(area).toBeCloseTo(9686.3, 1);
         });
 
+        it("should parse, validate, and resolve an ellipse hole", () => {
+            const scene = resolveGeometry({
+                version: 0.5,
+                objects: {
+                    panel: {
+                        type: "rect",
+                        size: [100, 80],
+                        holes: [{
+                            type: "ellipse",
+                            center: [50, 40],
+                            rx: 20,
+                            ry: 10,
+                            rotation: 0,
+                        }],
+                    },
+                },
+            } as any);
+
+            const panel = scene.objects.panel as any;
+            expect(panel.holes).toHaveLength(1);
+            expect(panel.holes[0].segments).toHaveLength(64);
+            // The hole is sampled with the same 64-segment policy used by
+            // resolved circles/ellipses, so assert the deterministic sampled
+            // area rather than the continuous analytic ellipse area.
+            expect(getAnchorValue(panel, "area", scene as any)).toBeCloseTo(7372.69, 1);
+        });
+
         it("should preserve chained curve segments in an inline hole", () => {
             const scene = resolveGeometry({
                 version: 0.5,

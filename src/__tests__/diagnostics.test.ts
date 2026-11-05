@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectDiagnostics,
+  aggregateDiagnostics,
   evaluateExpression,
   parseRelGeo,
   resolveGeometry,
@@ -42,6 +43,20 @@ objects:
       severity: "error",
     });
     expect(diagnostics[0].range?.start.line).toBeGreaterThanOrEqual(0);
+  });
+
+  it("retains a best-effort source range for semantic parse failures", () => {
+    const source = `version: 0.5
+objects:
+  bad:
+    type: rect
+`;
+
+    expect(() => parseRelGeo(source, { mode: "compile" })).toThrow(expect.objectContaining({
+      code: "MISSING_REQUIRED_FIELD",
+      path: "objects.bad.size",
+      range: expect.objectContaining({ start: expect.objectContaining({ line: 2 }) }),
+    }));
   });
 
   it("keeps strict parse and resolve behavior unchanged", () => {
@@ -90,6 +105,24 @@ objects:
     }));
   });
 
+  it("collects independent runtime failures after strict resolution stops at the first one", () => {
+    const diagnostics = collectDiagnostics({
+      version: "0.5",
+      objects: {
+        leftA: { type: "rect", size: [10, 10], place: { topLeft: [0, 0] } },
+        rightA: { type: "rect", size: [10, 10], place: { topLeft: [20, 0] } },
+        emptyA: { type: "boolean", operation: "intersect", shapes: ["leftA", "rightA"] },
+        leftB: { type: "rect", size: [10, 10], place: { topLeft: [100, 0] } },
+        rightB: { type: "rect", size: [10, 10], place: { topLeft: [120, 0] } },
+        emptyB: { type: "boolean", operation: "intersect", shapes: ["leftB", "rightB"] },
+      },
+    });
+
+    const emptyResults = diagnostics.filter((diagnostic) => diagnostic.code === "BOOLEAN_EMPTY_RESULT");
+    expect(emptyResults.map((diagnostic) => diagnostic.objectId)).toEqual(["emptyA", "emptyB"]);
+    expect(emptyResults.every((diagnostic) => diagnostic.phase === "runtime")).toBe(true);
+  });
+
   it("normalizes unregistered codes instead of leaking them", () => {
     const diagnostic = toDiagnostic(new Error("NOT_REGISTERED: internal failure"), {
       phase: "resolve",
@@ -101,6 +134,31 @@ objects:
       phase: "resolve",
       severity: "error",
     });
+  });
+
+  it("aggregates independent boundary failures with deterministic dedupe and truncation", () => {
+    const diagnostics = aggregateDiagnostics([
+      new Error("Unknown identifier: second"),
+      new Error("Unknown identifier: first"),
+      new Error("Unknown identifier: first"),
+    ], { phase: "validate", maxDiagnostics: 2 });
+
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.map(({ message }) => message)).toEqual([
+      "Unknown identifier: first",
+      "Unknown identifier: second",
+    ]);
+    expect(diagnostics.every(({ code, phase }) => code === "UNKNOWN_IDENTIFIER" && phase === "validate")).toBe(true);
+  });
+
+  it("normalizes boolean perimeter failures to the registered path-length code", () => {
+    expect(() => evaluateExpression("perimeter(shape)", {
+      scalars: {},
+      targetUnit: "px",
+      objects: { shape: { type: "boolean" } } as never,
+    })).toThrow(expect.objectContaining({
+      code: "PATH_LENGTH_UNAVAILABLE",
+    }));
   });
 
   it("exposes structured evaluator failures at the public boundary", () => {
@@ -161,6 +219,25 @@ objects:
     });
   });
 
+  it("carries structured constraint context into diagnostics", () => {
+    const diagnostics = collectDiagnostics({
+      version: "0.5",
+      objects: {
+        first: { type: "point", at: [0, 0] },
+        second: { type: "point", at: [10, 10] },
+      },
+      constraints: [{ align: { target: "first", with: "second" } }],
+    });
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      code: "CONSTRAINT_VIOLATION",
+      constraintType: "align",
+      origin: "constraint",
+      expected: { deviation: 0, tolerance: 0.001 },
+      actual: { deviation: expect.any(Number) },
+    }));
+  });
+
   it("normalizes raw evaluator failures to actionable catalog codes", () => {
     expect(toDiagnostic(new Error("Path \"open\" must be closed to expose area"))).toMatchObject({
       code: "PATH_NOT_CLOSED",
@@ -174,6 +251,27 @@ objects:
       code: "INVALID_VALUE",
       phase: "resolve",
     });
+  });
+
+  it("keeps evaluator error categories distinct at the public boundary", () => {
+    const cases = [
+      ["intersection() requires at least 2 arguments", "INVALID_INTERSECTION_INPUT"],
+      ["Cannot resolve point-like argument: missing", "TYPE_MISMATCH"],
+      ["Operation target missing not found", "UNKNOWN_REFERENCE"],
+      ["Arc \"curve\" does not expose a resolvable length", "PATH_LENGTH_UNAVAILABLE"],
+      ["project() requires a line target, got circle", "TYPE_MISMATCH"],
+      ["Arithmetic operations are only allowed on numbers/lengths", "TYPE_MISMATCH"],
+      ["Relational operators are only allowed on numbers", "TYPE_MISMATCH"],
+      ["Index must be a number", "TYPE_MISMATCH"],
+      ["Invalid token: @", "INVALID_EXPRESSION"],
+    ] as const;
+
+    for (const [message, code] of cases) {
+      expect(toDiagnostic(new Error(message), { phase: "resolve" })).toMatchObject({
+        code,
+        phase: code === "PATH_LENGTH_UNAVAILABLE" ? "runtime" : "resolve",
+      });
+    }
   });
 
   it("preserves validation phase and path at the resolve boundary", () => {

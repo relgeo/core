@@ -2,7 +2,7 @@ import type {
     RelGeoObject,
     ResolvedObject,
 } from "../types";
-import { ResolveContext } from "./types";
+import { ResolveContext, ResolveError } from "./types";
 import { resolvePoint } from "./primitives/point";
 import { 
     resolveRect, 
@@ -135,6 +135,11 @@ export function resolveObject(
         case "annotation":
             return resolveAnnotation(id, resolvedInput as any, ctx);
         default:
-            throw new Error(`Unknown object type: ${(resolvedInput as any).type}`);
+            throw new ResolveError(
+                `Unknown object type: ${(resolvedInput as any).type}`,
+                "INVALID_OBJECT_TYPE",
+                id,
+                `objects.${id}`,
+            );
     }
 }

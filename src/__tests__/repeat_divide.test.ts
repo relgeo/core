@@ -72,6 +72,48 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
     expect(lpt2.x).toBeCloseTo(100, 2);
   });
 
+  it("treats ellipse and resolved boolean boundaries as closed collections", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        ellipse: { type: "ellipse", center: [0, 0], rx: 10, ry: 5 },
+        ellipseDiv: { type: "divide", target: "ellipse", count: 4 } as any,
+        alongEllipse: {
+          type: "repeat",
+          along: { target: "ellipse", count: 4, spacing: "uniform-t" },
+          item: { type: "circle", radius: 1 },
+        } as any,
+        left: { type: "rect", size: [10, 10], place: { left: 0, top: 20 } },
+        right: { type: "rect", size: [10, 10], place: { left: 5, top: 20 } },
+        difference: {
+          type: "boolean",
+          operation: "union",
+          shapes: ["left", "right"],
+        },
+        booleanDiv: { type: "divide", target: "difference", count: 4 } as any,
+      },
+    };
+
+    const scene = resolveGeometry(doc, { textMetrics: mockTextMetrics });
+    const ellipseDiv = scene.objects.ellipseDiv as any;
+    expect(ellipseDiv.children).toEqual([
+      "ellipseDiv[0]", "ellipseDiv[1]", "ellipseDiv[2]", "ellipseDiv[3]",
+    ]);
+    expect((scene.objects["ellipseDiv[0]"] as any).x).toBeCloseTo(10, 2);
+    expect((scene.objects["ellipseDiv[1]"] as any).y).toBeCloseTo(5, 2);
+
+    const along = scene.objects.alongEllipse as any;
+    expect(along.children).toHaveLength(4);
+    expect((scene.objects[along.children[0]] as any).cx).not.toBeCloseTo(
+      (scene.objects[along.children[3]] as any).cx,
+      5,
+    );
+
+    const booleanDiv = scene.objects.booleanDiv as any;
+    expect(booleanDiv.children).toHaveLength(4);
+    expect((scene.objects[booleanDiv.children[0]] as any).type).toBe("point");
+  });
+
   it("handles linear repeat with index-based expressions", () => {
     const doc: RelGeoDocument = {
       version: 0.4,

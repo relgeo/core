@@ -7,7 +7,7 @@ import { resolveAnchorValue } from "../anchors";
 import { normalizeUnit } from "../../units";
 import { applyObjectPlacementAndTransform } from "./utils";
 import { getObjectBoundingBox } from "../geometry-utils";
-import { hasStructuredDiagnostic, stripErrorCodePrefix } from "../../errors";
+import { stripErrorCodePrefix } from "../../errors";
 
 function throwRepeatError(
     message: string,
@@ -20,8 +20,10 @@ function throwRepeatError(
 
 function isClosedPathLike(obj: any): boolean {
     return obj?.type === "circle"
+        || obj?.type === "ellipse"
         || obj?.type === "rect"
         || obj?.type === "polygon"
+        || obj?.type === "boolean"
         || (obj?.type === "path" && obj.closed === true);
 }
 
@@ -112,20 +114,19 @@ export function resolveRepeat(
         try {
             totalLength = Number(evaluateExpression(`length(${targetId})`, evalCtx));
         } catch (error: any) {
-            if (hasStructuredDiagnostic(error)) throw error;
             throwRepeatError(
                 stripErrorCodePrefix(error instanceof Error ? error.message : String(error)),
-                "INVALID_REPEAT_ALONG_TARGET",
+                "REPEAT_ALONG_LENGTH_FAILED",
                 id,
-                `objects.${id}.along.target`,
+                `objects.${id}.along`,
             );
         }
         if (!Number.isFinite(totalLength) || totalLength <= 0) {
             throwRepeatError(
                 `target "${targetId}" does not expose usable path length`,
-                "INVALID_REPEAT_ALONG_TARGET",
+                "REPEAT_ALONG_LENGTH_FAILED",
                 id,
-                `objects.${id}.along.target`,
+                `objects.${id}.along`,
             );
         }
 

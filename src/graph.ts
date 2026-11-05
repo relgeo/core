@@ -573,6 +573,15 @@ export function getObjectDependencies(
       addDivideDependencies(obj as DivideObject, addRef);
       break;
 
+    case "boolean":
+      addRef((obj as any).base);
+      addDeepDeps((obj as any).tools, addRef);
+      addDeepDeps((obj as any).shapes, addRef);
+      if (Array.isArray((obj as any).holes)) {
+        addClosedShapeHolesDependencies(obj as any, addRef);
+      }
+      break;
+
     case "collection":
       if (Array.isArray((obj as CollectionObject).children)) {
         for (const child of (obj as CollectionObject).children) {
@@ -825,12 +834,14 @@ export function sortNodes(
         ...cycle.slice(0, canonicalIndex),
       ];
       const chain = [...canonicalCycle, canonicalStart];
-      throw new ResolveError(
+      const error = new ResolveError(
         `Circular dependency detected: ${chain.join(" -> ")}`,
         "CIRCULAR_DEPENDENCY",
         canonicalStart,
-        chain.join(" -> ")
+        `objects.${canonicalStart}`
       );
+      error.dependencyChain = chain;
+      throw error;
     }
 
     if (visited.has(id)) return;

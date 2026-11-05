@@ -21,6 +21,7 @@ const RUNTIME_CODES = new Set<RelGeoErrorCode>([
   "INVALID_T_AT_LENGTH",
   "PATH_LENGTH_UNAVAILABLE",
   "INVALID_RESOLVED_SCENE",
+  "INVALID_SEMANTIC_SNAPSHOT",
 ]);
 
 const VALIDATION_CODES = new Set<RelGeoErrorCode>([
@@ -39,6 +40,10 @@ const VALIDATION_CODES = new Set<RelGeoErrorCode>([
   "INVALID_VALUE",
   "INVALID_TYPE",
   "INVALID_BOOLEAN_OPERATION",
+  "INVALID_OPERATION_TARGET",
+  "INVALID_SCALE_FACTOR",
+  "INVALID_MIRROR_AXIS",
+  "INVALID_HOLE_SHAPE",
   "INVALID_INHERIT_TARGET",
   "INHERIT_TARGET_NOT_FOUND",
   "CIRCULAR_INHERIT",
@@ -48,9 +53,11 @@ const VALIDATION_CODES = new Set<RelGeoErrorCode>([
   "INVALID_REPEAT_ALONG_TARGET",
   "INVALID_REPEAT_ALONG_SPACING",
   "INVALID_FIXED_DISTANCE",
+  "INVALID_OFFSET",
   "INVALID_UNIT_VALUE",
   "ELLIPSE_INVALID_RADIUS",
   "ELLIPSE_SIZE_CONFLICT",
+  "INHERIT_TYPE_CONFLICT",
 ]);
 
 export interface DiagnosticOptions {
@@ -61,6 +68,10 @@ export interface DiagnosticOptions {
   path?: string;
   objectId?: string;
   dependencyChain?: string[];
+}
+
+export interface AggregateDiagnosticsOptions extends DiagnosticOptions {
+  maxDiagnostics?: number;
 }
 
 export interface CoreErrorOptions {
@@ -99,13 +110,44 @@ function codeFromMessage(message: string): RelGeoErrorCode | undefined {
   if (lower.includes("unsupported object selector") || lower.includes("unknown intersection selector")) {
     return "INVALID_INTERSECTION_SELECTOR";
   }
+  if (lower.includes("intersection() requires at least")) return "INVALID_INTERSECTION_INPUT";
+  if (lower.includes("cannot resolve geometry function") || lower.includes("without objects context")) {
+    return "RESOLVE_ERROR";
+  }
+  if (lower.includes("cannot resolve point-like argument")) return "TYPE_MISMATCH";
+  if (lower.includes("relational operators are only allowed on numbers")) return "TYPE_MISMATCH";
+  if (lower.includes("arithmetic operations are only allowed on numbers/lengths")) return "TYPE_MISMATCH";
+  if (lower.includes("exponentiation is only allowed on numbers")) return "TYPE_MISMATCH";
+  if (lower.includes("unary minus can only be applied to numbers")) return "TYPE_MISMATCH";
+  if (lower.includes("index must be a number")) return "TYPE_MISMATCH";
+  if (lower.includes("cannot resolve") && lower.includes("transform without objects context")) return "RESOLVE_ERROR";
+  if (lower.includes("does not expose a resolvable target")) return "INVALID_VALUE";
+  if (lower.includes("operation target") && lower.includes("not found")) return "UNKNOWN_REFERENCE";
+  if (lower.includes("invalid object reference")) return "UNKNOWN_REFERENCE";
+  if (lower.includes("unknown member")) return "UNKNOWN_ANCHOR";
+  if (lower.includes("area is only available on closed path")) return "PATH_NOT_CLOSED";
+  if (lower.includes("does not resolve to a number")) return "TYPE_MISMATCH";
+  if (lower.includes("does not expose a resolvable length") || lower.includes("does not expose a resolvable perimeter")) {
+    return "PATH_LENGTH_UNAVAILABLE";
+  }
+  if (lower.includes("does not expose a resolvable pointat") || lower.includes("does not expose a resolvable tangentat") || lower.includes("does not expose a resolvable closestpoint")) {
+    return "TYPE_MISMATCH";
+  }
+  if (lower.includes("requires a line target") || lower.includes("requires a point or line target")) {
+    return "TYPE_MISMATCH";
+  }
+  if (lower.includes("invalid token")) return "INVALID_EXPRESSION";
+  if (lower.includes("expected ':'") || lower.includes("expected member identifier") || lower.includes("missing closing bracket")) {
+    return "INVALID_EXPRESSION";
+  }
+  if (lower.includes("requires at least") || lower.includes("requires exactly one argument")) return "INVALID_VALUE";
   if (lower.includes("index out of bounds") && lower.includes("collection")) {
     return "INVALID_COLLECTION_ACCESS";
   }
   if (lower.includes("tangent") && lower.includes("zero length")) return "TANGENT_NOT_FOUND";
   if (lower.includes("path ") && lower.includes("must be closed")) return "PATH_NOT_CLOSED";
   if (lower.includes("path ") && lower.includes("zero length")) return "PATH_LENGTH_UNAVAILABLE";
-  if (lower.includes("unknown object in") || lower.includes("unknown reference in") || lower.includes("unknown base object") || lower.includes("unknown tool object") || lower.includes("unknown shape operand")) {
+  if (lower.includes("unknown object in") || lower.includes("unknown reference in") || lower.includes("unknown base object") || lower.includes("unknown tool object") || lower.includes("unknown shape operand") || lower.includes("unknown or invalid object in")) {
     return "UNKNOWN_REFERENCE";
   }
   if (lower.includes("unknown object type")) return "INVALID_OBJECT_TYPE";
@@ -116,7 +158,7 @@ function codeFromMessage(message: string): RelGeoErrorCode | undefined {
     return "INVALID_EXPRESSION";
   }
   if (lower.includes("non-finite number at")) return "INVALID_RESOLVED_SCENE";
-  if (lower.includes("expected json")) return "INVALID_RESOLVED_SCENE";
+  if (lower.includes("expected json")) return "INVALID_SEMANTIC_SNAPSHOT";
   if (lower.includes("division by zero")) return "DIVISION_BY_ZERO";
   if (lower.includes("unknown identifier")) return "UNKNOWN_IDENTIFIER";
   if (lower.includes("unknown anchor")) return "UNKNOWN_ANCHOR";
@@ -215,6 +257,10 @@ export function toDiagnostic(error: unknown, options: DiagnosticOptions = {}): R
     phase,
     severity,
     range: candidate.range ?? options.range,
+    constraintType: candidate.constraintType,
+    origin: candidate.origin,
+    expected: candidate.expected,
+    actual: candidate.actual,
   };
 }
 
@@ -261,6 +307,26 @@ export function sortDiagnostics(diagnostics: RelGeoDiagnostic[]): RelGeoDiagnost
     if (codeDelta) return codeDelta;
     return compareStrings(left.message, right.message);
   });
+}
+
+/**
+ * Normalize and aggregate independent failures at a public boundary. This is
+ * intentionally separate from strict resolver fail-fast behavior: adapters
+ * such as language-service workers can collect failures from multiple passes
+ * while retaining the same deterministic ordering and truncation contract.
+ */
+export function aggregateDiagnostics(
+  errors: readonly unknown[],
+  options: AggregateDiagnosticsOptions = {},
+): RelGeoDiagnostic[] {
+  const requestedMax = options.maxDiagnostics ?? 100;
+  const maxDiagnostics = Number.isFinite(requestedMax)
+    ? Math.max(0, Math.floor(requestedMax))
+    : 100;
+  const { maxDiagnostics: _ignored, ...diagnosticOptions } = options;
+  return sortDiagnostics(
+    errors.map((error) => toDiagnostic(error, diagnosticOptions)),
+  ).slice(0, maxDiagnostics);
 }
 
 /**

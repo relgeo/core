@@ -102,6 +102,32 @@ export interface ParseOptions {
   mode?: RelGeoMode;
 }
 
+/** Best-effort semantic path to source range mapping for editor consumers. */
+export function sourceRangeForPath(source: string, path?: string): SourceRange | undefined {
+  if (!path) return undefined;
+  const lines = source.split("\n");
+  // Invalid fields may not exist in the source (for example a missing
+  // required `size`). Fall back from the deepest path segment to its nearest
+  // declared parent so the editor still gets a useful highlight.
+  const keys = path.split(".").reverse().map((part) =>
+    part.replace(/\[\d+\]/g, "").replace(/^['"]|['"]$/g, ""),
+  );
+  for (const key of keys) {
+    if (!key) continue;
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`^\\s*(?:["']${escaped}["']|${escaped}):`);
+    for (let line = 0; line < lines.length; line += 1) {
+      const match = lines[line].match(pattern);
+      if (!match) continue;
+      return {
+        start: { line, column: Math.max(0, match[0].search(/\S/)) },
+        end: { line, column: lines[line].length },
+      };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Tolerant parser for editor/playground use cases.
  */
@@ -292,7 +318,10 @@ export function parseRelGeo(
   try {
     return parseRelGeoInternal(yaml, options);
   } catch (error) {
-    if (error instanceof ParseError) throw error;
+    if (error instanceof ParseError) {
+      if (!error.range) error.range = sourceRangeForPath(yaml, error.path);
+      throw error;
+    }
     const candidate = error && typeof error === "object"
       ? error as { code?: unknown; path?: string; range?: SourceRange }
       : {};
