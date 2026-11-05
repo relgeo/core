@@ -74,6 +74,25 @@ objects:
     expect(() => parseRelGeo(yaml)).toThrow("YAML Parse Error");
   });
 
+  it("rejects duplicate object identities instead of silently overwriting them", () => {
+    const yaml = `
+version: 0.5
+objects:
+  marker:
+    type: point
+    at: [0, 0]
+  marker:
+    type: point
+    at: [10, 10]
+`;
+
+    expect(() => parseRelGeo(yaml)).toThrowError(expect.objectContaining({
+      code: "INVALID_YAML",
+      phase: "parse",
+    }));
+    expect(() => parseRelGeo(yaml)).toThrow(/duplicated mapping key/i);
+  });
+
   it("should inject IDs into objects", () => {
     const yaml = `
 version: 0.1

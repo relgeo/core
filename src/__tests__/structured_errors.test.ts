@@ -5,6 +5,18 @@ import { ValidationError, Validator } from "../validator";
 import { CoreError } from "../errors";
 
 describe("structured resolver errors", () => {
+  it("preserves geometry-owned diagnostic codes at the resolver boundary", () => {
+    const error = new ResolveError("transform contains a non-finite value", "INVALID_TRANSFORM", "panel", "objects.panel");
+
+    expect(error).toMatchObject({
+      code: "INVALID_TRANSFORM",
+      objectId: "panel",
+      path: "objects.panel",
+      phase: "resolve",
+    });
+    expect(error.message).toContain("INVALID_TRANSFORM");
+  });
+
   it("normalizes uncategorized resolver exceptions with object context", () => {
     const doc = {
       version: "0.5",

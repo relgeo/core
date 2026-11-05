@@ -45,4 +45,38 @@ objects:
         const G = scene.objects.G as any;
         expect(G.anchors.center_hook).toEqual({ x: 50, y: 50 });
     });
+
+    it("should use a custom group anchor as a placement target", () => {
+        const scene = resolveGeometry({
+            version: 0.5,
+            objects: {
+                G: {
+                    type: "group",
+                    children: ["P"],
+                    anchors: { hook: ["50%", "50%"] },
+                    place: { hook: [100, 100] },
+                },
+                P: { type: "point", at: [0, 0] },
+            },
+        } as any);
+
+        const group = scene.objects.G as any;
+        expect(group.anchors.hook).toEqual({ x: 0, y: 0 });
+        expect(group.transform).toEqual([{ type: "translate", x: 100, y: 100 }]);
+    });
+
+    it("should reject mixing a custom anchor placement with a standard placement", () => {
+        expect(() => resolveGeometry({
+            version: 0.5,
+            objects: {
+                G: {
+                    type: "group",
+                    children: ["P"],
+                    anchors: { hook: ["50%", "50%"] },
+                    place: { hook: [100, 100], left: 0 },
+                },
+                P: { type: "point", at: [0, 0] },
+            },
+        } as any)).toThrow("OVER_CONSTRAINED");
+    });
 });

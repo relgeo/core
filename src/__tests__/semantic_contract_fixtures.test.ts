@@ -65,6 +65,27 @@ describe("semantic contract fixtures", () => {
       strictCode: "MISSING_REQUIRED_FIELD",
       multiDiagnosticCount: 2,
     });
+    expect(fixture("v05-collection-boolean-contract").coreContract).toMatchObject({
+      kind: "collection-boolean",
+      booleanOperations: ["union", "xor"],
+      repeatModes: ["along", "grid", "polar", "each"],
+      stableChildIdentity: true,
+    });
+  });
+
+  it("resolves the active collection and boolean capability fixture deterministically", () => {
+    const doc = parseRelGeo(fixtureSource("v05-collection-boolean-contract"));
+    const first = resolveGeometry(doc);
+    const second = resolveGeometry(doc);
+
+    expect(first.objects.merged).toMatchObject({ type: "boolean", operation: "union" });
+    expect(first.objects.symmetricDifference).toMatchObject({ type: "boolean", operation: "xor" });
+    for (const id of ["alongMarks", "gridMarks", "polarMarks", "eachMarks"]) {
+      expect(first.objects[id]).toMatchObject({ type: "collection" });
+      expect((first.objects[id] as any).children.length).toBeGreaterThan(0);
+      expect((first.objects[id] as any).children).toEqual((second.objects[id] as any).children);
+    }
+    expect(first.objects).toEqual(second.objects);
   });
 
   it("keeps reference failure code, phase, path, and strict behavior stable", () => {

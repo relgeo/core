@@ -51,7 +51,17 @@ import {
 
 function resolvePointRef(ref: AnchorRef, ctx: ResolveContext) {
     const p = resolveAnchorValue(ref, ctx);
-    return typeof p === "number" ? { x: p, y: p } : p;
+    const point = typeof p === "number" ? { x: p, y: p } : p;
+    if (!point || typeof point !== "object" || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        throw new ResolveError("Point reference must resolve to finite coordinates", "INVALID_VALUE");
+    }
+    return point;
+}
+
+function assertFiniteScalar(value: number, label: string, id: string): void {
+    if (!Number.isFinite(value)) {
+        throw new ResolveError(`${label} must resolve to a finite number`, "INVALID_VALUE", id, label);
+    }
 }
 
 function normalizeAngle(angle: number): number {
@@ -426,6 +436,8 @@ export function resolveRect(id: string, obj: RectObject, ctx: ResolveContext): R
     try {
         width = normalizeUnit(evaluateExpression(obj.size[0], evalCtx), ctx.targetUnit);
         height = normalizeUnit(evaluateExpression(obj.size[1], evalCtx), ctx.targetUnit);
+        assertFiniteScalar(width, "size[0]", id);
+        assertFiniteScalar(height, "size[1]", id);
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, id, "size");
     }
@@ -500,6 +512,11 @@ export function resolveLine(id: string, obj: LineObject, ctx: ResolveContext): R
         if (ctx.mode !== "editor") wrapError(e, id, "line resolution");
     }
 
+    assertFiniteScalar(x1, "from.x", id);
+    assertFiniteScalar(y1, "from.y", id);
+    assertFiniteScalar(x2, "to.x", id);
+    assertFiniteScalar(y2, "to.y", id);
+
     const bbox = {
         x: Math.min(x1, x2),
         y: Math.min(y1, y2),
@@ -544,6 +561,9 @@ export function resolveCircle(id: string, obj: CircleObject, ctx: ResolveContext
             const ty = typeof tp === "number" ? tp : tp.y;
             radius = Math.sqrt(Math.pow(tx - cx, 2) + Math.pow(ty - cy, 2));
         }
+        assertFiniteScalar(cx, "center.x", id);
+        assertFiniteScalar(cy, "center.y", id);
+        assertFiniteScalar(radius, "radius", id);
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, id, "circle resolution");
     }
@@ -616,6 +636,12 @@ export function resolveEllipse(id: string, obj: EllipseObject, ctx: ResolveConte
         if (obj.rotation !== undefined) {
             rotation = evaluateExpression(obj.rotation, evalCtx);
         }
+
+        assertFiniteScalar(cx, "center.x", id);
+        assertFiniteScalar(cy, "center.y", id);
+        assertFiniteScalar(rx, "rx", id);
+        assertFiniteScalar(ry, "ry", id);
+        assertFiniteScalar(rotation, "rotation", id);
 
         if (rx <= 0 || ry <= 0) {
             throw new ResolveError(

@@ -199,6 +199,34 @@ describe("resolver geometry", () => {
     expect(C.y).toBe(55);
   });
 
+  it("rejects non-finite primitive coordinates before publishing a scene", () => {
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        badPoint: { type: "point", at: [Number.NaN, 0] } as any,
+      },
+    })).toThrow(/INVALID_VALUE/);
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        badEllipse: { type: "ellipse", center: [0, 0], rx: Number.NaN, ry: 10 } as any,
+      },
+    })).toThrow(/INVALID_VALUE/);
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        badCurve: {
+          type: "quadratic",
+          from: [0, 0],
+          cp: [Number.NaN, 5],
+          to: [10, 0],
+        } as any,
+      },
+    })).toThrow(/INVALID_VALUE/);
+  });
+
   it("should throw on circular dependency between objects", () => {
     const doc: RelGeoDocument = {
       version: 0.1,

@@ -297,6 +297,25 @@ describe("Sheet & View Composition System", () => {
       expect(view.bbox.width).toBe(100);
       expect(view.bbox.height).toBe(50);
     });
+
+    it("should use a custom clone anchor as a placement target", () => {
+      const scene = resolveGeometry({
+        version: 0.5,
+        objects: {
+          base: { type: "rect", size: [10, 10], place: { topLeft: [0, 0] } },
+          shifted: {
+            type: "clone",
+            of: "base",
+            anchors: { hook: ["50%", "50%"] },
+            place: { hook: [100, 100] },
+          },
+        },
+      } as any);
+
+      const clone = scene.objects.shifted as any;
+      expect(clone.anchors.hook).toEqual({ x: 5, y: 5 });
+      expect(clone.transform).toEqual([{ type: "translate", x: 95, y: 95 }]);
+    });
   });
 
   describe("Semantic Validation Rules", () => {

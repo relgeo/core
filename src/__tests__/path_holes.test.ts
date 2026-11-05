@@ -510,5 +510,35 @@ objects:
             const area = getAnchorValue(polyObj, "area", scene as any);
             expect(area).toBeCloseTo(9686.3, 1);
         });
+
+        it("should preserve chained curve segments in an inline hole", () => {
+            const scene = resolveGeometry({
+                version: 0.5,
+                objects: {
+                    panel: {
+                        type: "polygon",
+                        points: [[0, 0], [30, 0], [30, 30], [0, 30]],
+                        holes: [{
+                            segments: [
+                                { quadratic: { from: [5, 5], cp: [10, 12], to: [15, 5] } },
+                                { line: { to: [15, 15] } },
+                                { cubic: { cp1: [12, 20], cp2: [8, 20], to: [5, 15] } },
+                                { line: { to: [5, 5] } },
+                            ],
+                        }],
+                    },
+                },
+            } as any);
+
+            const hole = (scene.objects.panel as any).holes[0];
+            expect(hole.segments.map((segment: any) => segment.type)).toEqual([
+                "quadratic", "line", "cubic", "line",
+            ]);
+            for (let index = 1; index < hole.segments.length; index++) {
+                expect(hole.segments[index].x1).toBe(hole.segments[index - 1].x2);
+                expect(hole.segments[index].y1).toBe(hole.segments[index - 1].y2);
+            }
+            expect(hole.segments.at(-1)).toMatchObject({ x2: 5, y2: 5 });
+        });
     });
 });

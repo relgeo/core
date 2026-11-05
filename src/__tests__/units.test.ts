@@ -29,6 +29,12 @@ describe("units", () => {
     it("should handle invalid units by parsing number", () => {
       expect(convertToPx("100xyz")).toBe(100);
     });
+
+    it("should reject malformed known-unit values instead of truncating them", () => {
+      expect(() => convertToPx("1.2.3cm")).toThrow("INVALID_UNIT_VALUE");
+      expect(() => convertToPx("NaNpx")).toThrow("INVALID_UNIT_VALUE");
+      expect(() => convertToPx(Number.NaN)).toThrow("INVALID_UNIT_VALUE");
+    });
   });
 
   describe("convertFromPx", () => {
@@ -63,6 +69,11 @@ describe("units", () => {
   it("should preserve non-unit string literals", () => {
     expect(normalizeUnit("not-a-number")).toBe("not-a-number");
     expect(normalizeUnit("guide")).toBe("guide");
+  });
+  it("should reject malformed numeric values with known units", () => {
+    expect(() => normalizeUnit("1.2.3cm")).toThrow("INVALID_UNIT_VALUE");
+    expect(() => normalizeUnit("1e2cm", "mm")).not.toThrow();
+    expect(normalizeUnit("1e2cm", "mm")).toBeCloseTo(1000);
   });
 });
 });

@@ -6,21 +6,39 @@ const CM_TO_PX = 96 / 2.54;
 const M_TO_PX = (96 / 2.54) * 100;
 const IN_TO_PX = 96;
 const DEG_TO_RAD = Math.PI / 180;
+const NUMBER_PATTERN = "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?";
+const UNIT_PATTERN = new RegExp(`^(${NUMBER_PATTERN})(px|mm|cm|m|in|%|deg|rad)$`);
+const UNIT_OR_NUMBER_PATTERN = new RegExp(`^(${NUMBER_PATTERN})(px|mm|cm|m|in|%|deg|rad)?$`);
+const KNOWN_UNIT_SUFFIX = /(?:px|mm|cm|m|in|%|deg|rad)$/i;
+
+function invalidUnitValue(value: unknown): CoreError {
+  return new CoreError(String(value), "INVALID_UNIT_VALUE", { phase: "validate" });
+}
 
 export function convertToPx(value: string | number): number {
-  if (typeof value === "number") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw invalidUnitValue(value);
+    return value;
+  }
 
-  const match = value.match(/^([\d.-]+)(px|mm|cm|m|in|%|deg|rad)$/);
+  const normalized = value.trim();
+  const match = normalized.match(UNIT_PATTERN);
   if (!match) {
-    const num = parseFloat(value);
-    if (isNaN(num)) {
-      throw new CoreError(value, "INVALID_UNIT_VALUE", { phase: "validate" });
+    // Preserve the historical fallback for unknown unit suffixes such as
+    // `100xyz`, while refusing malformed values that claim a known unit.
+    if (KNOWN_UNIT_SUFFIX.test(normalized)) {
+      throw invalidUnitValue(value);
     }
+    const prefix = normalized.match(new RegExp(`^(${NUMBER_PATTERN})`));
+    if (!prefix) throw invalidUnitValue(value);
+    const num = Number(prefix[1]);
+    if (!Number.isFinite(num)) throw invalidUnitValue(value);
     return num;
   }
 
-  const num = parseFloat(match[1]);
+  const num = Number(match[1]);
   const unit = match[2];
+  if (!Number.isFinite(num)) throw invalidUnitValue(value);
 
   if (unit === "%") {
     return num / 100;
@@ -46,6 +64,7 @@ export function convertToPx(value: string | number): number {
 }
 
 export function convertFromPx(px: number, targetUnit: LengthUnit): number {
+  if (!Number.isFinite(px)) throw invalidUnitValue(px);
   switch (targetUnit) {
     case "mm":
       return px / MM_TO_PX;
@@ -86,23 +105,24 @@ export function normalizeUnit(
     return res;
   }
 
-  const strVal = String(value);
+  const strVal = String(value).trim();
 
-  // Use strict regex to check if it's a number with optional unit
-  const match = strVal.match(/^([+-]?[\d.-]+)(px|mm|cm|m|in|%|deg|rad)?$/);
+  // Use a strict numeric grammar so malformed values such as `1.2.3cm`
+  // cannot silently become a truncated parseFloat result.
+  const match = strVal.match(UNIT_OR_NUMBER_PATTERN);
   if (!match) {
-    // Not a valid number+unit format, might be a string literal (e.g. "red", "cross")
-    // Let's check if it's a pure number without unit first, just in case
-    const num = parseFloat(strVal);
-    if (!isNaN(num) && String(num) === strVal) {
-      return num;
+    if (/^[+-]?(?:\d|\.)/.test(strVal) && KNOWN_UNIT_SUFFIX.test(strVal)) {
+      throw invalidUnitValue(value);
     }
+    // Non-numeric values remain string literals (e.g. "red", "cross").
     return value;
   }
 
   const unit = match[2];
   if (!unit) {
-    return parseFloat(match[1]);
+    const num = Number(match[1]);
+    if (!Number.isFinite(num)) throw invalidUnitValue(value);
+    return num;
   }
 
   const pxValue = convertToPx(strVal);

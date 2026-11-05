@@ -128,4 +128,44 @@ objects:
     expect(last.x2).toBeCloseTo(-5);
     expect(last.y2).toBeCloseTo(15);
   });
+
+  it("preserves curve segment identity when splitting a quadratic", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      objects: {
+        curve: {
+          type: "quadratic",
+          from: [0, 0],
+          cp: [5, 10],
+          to: [10, 0],
+        },
+        cut: { type: "split", target: "curve", at: [5, 5] },
+      },
+    } as any);
+
+    const cut = resolved.objects.cut as any;
+    expect(cut.type).toBe("collection");
+    expect(cut.children).toEqual(["cut[0]", "cut[1]"]);
+    expect((resolved.objects["cut[0]"] as any).segments[0].type).toBe("quadratic");
+    expect((resolved.objects["cut[1]"] as any).segments[0].type).toBe("quadratic");
+    expect((resolved.objects["cut[0]"] as any).segments[0]).toMatchObject({ x1: 0, y1: 0, x2: 5, y2: 5 });
+    expect((resolved.objects["cut[1]"] as any).segments[0]).toMatchObject({ x1: 5, y1: 5, x2: 10, y2: 0 });
+  });
+
+  it("keeps result ordering when splitting a reversed and translated target", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      objects: {
+        base: { type: "line", from: [0, 0], to: [10, 0] },
+        reversed: { type: "reverse", target: "base" },
+        shifted: { type: "translate", target: "reversed", by: [5, 0] },
+        cut: { type: "split", target: "shifted", at: [8, 0] },
+      },
+    } as any);
+
+    const cut = resolved.objects.cut as any;
+    expect(cut.children).toEqual(["cut[0]", "cut[1]"]);
+    expect((resolved.objects["cut[0]"] as any).segments[0]).toMatchObject({ x1: 15, y1: 0, x2: 8, y2: 0 });
+    expect((resolved.objects["cut[1]"] as any).segments[0]).toMatchObject({ x1: 8, y1: 0, x2: 5, y2: 0 });
+  });
 });

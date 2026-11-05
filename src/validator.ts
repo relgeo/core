@@ -1301,8 +1301,14 @@ export class Validator {
     }
     const pathParts = path.split(".");
     const isComponent = pathParts.length >= 2 && pathParts[0] === "objects" && this.doc.objects && this.doc.objects[pathParts[1]]?.type === "component";
+    const ownerAnchors = pathParts.length >= 2 && pathParts[0] === "objects"
+      ? this.doc.objects?.[pathParts[1]]?.anchors
+      : undefined;
     for (const [key, value] of Object.entries(place)) {
-      if (!PLACE_FIELDS.has(key) && !isComponent) {
+      const isCustomAnchor = !PLACE_FIELDS.has(key)
+        && ownerAnchors
+        && Object.prototype.hasOwnProperty.call(ownerAnchors, key);
+      if (!PLACE_FIELDS.has(key) && !isComponent && !isCustomAnchor) {
         if (this.mode !== "editor") {
           throw new ValidationError(
             `Unknown place field: ${key}`,
@@ -1587,12 +1593,28 @@ export class Validator {
       vSources.push("centerRight");
     }
 
+    // A declared custom anchor is a complete placement source for both axes.
+    // Count it explicitly so mixing it with a standard placement source is
+    // reported as over-constrained instead of silently preferring the custom
+    // anchor at resolve time.
+    if (place && typeof place === "object" && !Array.isArray(place) && obj.anchors) {
+      for (const key of Object.keys(place)) {
+        if (!PLACE_FIELDS.has(key) && Object.prototype.hasOwnProperty.call(obj.anchors, key)) {
+          hSources.push(`anchor:${key}`);
+          vSources.push(`anchor:${key}`);
+        }
+      }
+    }
+
     if (hSources.length > 1) {
       throw new ValidationError(`${obj.type} "${id}" is over-constrained horizontally. Found multiple positions: ${hSources.join(", ")}.`, `objects.${id}`, "OVER_CONSTRAINED");
     }
     if (hSources.length === 0) {
+      const isCustomAnchorPlacement = Object.keys(place).some(k =>
+        !PLACE_FIELDS.has(k) && obj.anchors && Object.prototype.hasOwnProperty.call(obj.anchors, k),
+      );
       const isComponentWithCustomPlace = obj.type === "component" && Object.keys(place).some(k => !PLACE_FIELDS.has(k));
-      if (!isComponentWithCustomPlace) {
+      if (!isComponentWithCustomPlace && !isCustomAnchorPlacement) {
         throw new ValidationError(`${obj.type} "${id}" is under-constrained horizontally. Missing horizontal position in "place".`, `objects.${id}`, "UNDER_CONSTRAINED");
       }
     }
@@ -1601,8 +1623,11 @@ export class Validator {
       throw new ValidationError(`${obj.type} "${id}" is over-constrained vertically. Found multiple positions: ${vSources.join(", ")}.`, `objects.${id}`, "OVER_CONSTRAINED");
     }
     if (vSources.length === 0) {
+      const isCustomAnchorPlacement = Object.keys(place).some(k =>
+        !PLACE_FIELDS.has(k) && obj.anchors && Object.prototype.hasOwnProperty.call(obj.anchors, k),
+      );
       const isComponentWithCustomPlace = obj.type === "component" && Object.keys(place).some(k => !PLACE_FIELDS.has(k));
-      if (!isComponentWithCustomPlace) {
+      if (!isComponentWithCustomPlace && !isCustomAnchorPlacement) {
         throw new ValidationError(`${obj.type} "${id}" is under-constrained vertically. Missing vertical position in "place".`, `objects.${id}`, "UNDER_CONSTRAINED");
       }
     }

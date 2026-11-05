@@ -60,9 +60,10 @@ export function resolveComponent(
     // parameter is scoped to the instance, so defaults such as
     // `width: base * 2` must see `base` from the same component rather than
     // accidentally resolving against document globals.
+    const parameterIds = Object.keys(compDef.parameters || {});
+    const effectiveValues = new Map<string, unknown>();
+    let parameterOrder: string[] = [];
     if (compDef.parameters) {
-        const parameterIds = Object.keys(compDef.parameters);
-        const effectiveValues = new Map<string, unknown>();
         for (const pName of parameterIds) {
             const definition = compDef.parameters[pName];
             const defaultValue = componentParameterExpression(definition);
@@ -72,7 +73,7 @@ export function resolveComponent(
             effectiveValues.set(pName, suppliedValue);
         }
 
-        const parameterOrder = sortNodes(parameterIds, (pName) => {
+        parameterOrder = sortNodes(parameterIds, (pName) => {
             const value = effectiveValues.get(pName);
             return getComponentParameterDependencies(value, new Set(parameterIds));
         });
@@ -108,6 +109,7 @@ export function resolveComponent(
             });
             const evaluated = evaluateComponentParameter(pVal, inheritedEvalCtx, parameterType);
             localScalars[pName] = evaluated;
+            effectiveValues.set(pName, pVal);
         }
 
         for (const [pName, pVal] of Object.entries(obj.params)) {
@@ -122,6 +124,27 @@ export function resolveComponent(
             });
             const evaluated = evaluateComponentParameter(pVal, localParamEvalCtx, parameterType);
             localScalars[pName] = evaluated;
+            effectiveValues.set(pName, pVal);
+        }
+
+        // Inherited values and instance overrides may themselves depend on
+        // component parameters. Re-evaluate the final effective values in the
+        // same topological order used for defaults so YAML/object declaration
+        // order cannot change the component result.
+        parameterOrder = sortNodes(parameterIds, (pName) => {
+            return getComponentParameterDependencies(effectiveValues.get(pName), new Set(parameterIds));
+        });
+        for (const pName of parameterOrder) {
+            const value = effectiveValues.get(pName);
+            const definition = compDef.parameters?.[pName];
+            const parameterType = definition && typeof definition === "object" && !Array.isArray(definition)
+                ? (definition as any).type
+                : undefined;
+            const orderedEvalCtx = createEvalContext({
+                ...ctx,
+                scalars: { ...ctx.scalars, ...localScalars },
+            });
+            localScalars[pName] = evaluateComponentParameter(value, orderedEvalCtx, parameterType);
         }
     }
 

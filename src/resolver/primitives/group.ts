@@ -23,8 +23,13 @@ export function resolveGroup(
 
     const bbox = calculateBoundingBox(childObjects);
 
+    // Resolve anchors in the group's local child bbox before placement so a
+    // custom anchor can itself be used as the placement target.
+    const localAnchorOwner = { id, type: "group", children: [...children] };
+    const localAnchors = resolveCustomAnchors(obj, localAnchorOwner, ctx, bbox);
+
     // 3. Apply Placement and Transform
-    const { resolvedTransform, dx, dy } = applyObjectPlacementAndTransform(obj, bbox, ctx);
+    const { resolvedTransform, dx, dy } = applyObjectPlacementAndTransform(obj, bbox, ctx, localAnchors);
 
     // For groups, we must add the translate to the pipeline since they don't have x, y
     const finalTransform = resolvedTransform || [];
@@ -40,6 +45,6 @@ export function resolveGroup(
         meta: obj.meta,
     };
 
-    resolved.anchors = resolveCustomAnchors(obj, resolved, ctx, bbox);
+    resolved.anchors = localAnchors;
     return resolved;
 }

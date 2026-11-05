@@ -1120,6 +1120,15 @@ export class Evaluator {
         return this.polylineLength(obj.points, true);
       }
     }
+    if (obj.type === "boolean") {
+      if (Array.isArray(obj.segments) && obj.segments.length > 0) {
+        return this.getLengthFromObject(
+          { type: "path", closed: true, segments: obj.segments },
+          label,
+        );
+      }
+      throw new Error(`BOOLEAN_LENGTH_UNAVAILABLE: Boolean "${label}" does not expose a resolvable perimeter`);
+    }
     throw new Error(`PATH_LENGTH_UNAVAILABLE: Unknown or invalid object in length: ${label}`);
   }
 
@@ -1205,7 +1214,7 @@ export class Evaluator {
     if (obj.type === "line") {
       return this.bboxFromPoints([{ x: obj.x1, y: obj.y1 }, { x: obj.x2, y: obj.y2 }]);
     }
-    if (obj.type === "arc" || obj.type === "quadratic" || obj.type === "cubic" || obj.type === "path" || obj.type === "polygon") {
+    if (obj.type === "arc" || obj.type === "quadratic" || obj.type === "cubic" || obj.type === "path" || obj.type === "polygon" || obj.type === "boolean") {
       const samples = this.sampleObjectBoundaryPoints(obj, label, 96);
       return this.bboxFromPoints(samples);
     }
@@ -1294,12 +1303,12 @@ export class Evaluator {
         return this.pointAtPolyline(obj.points, clamped, label, obj.closed === true);
       }
     }
-    if (obj.type === "polygon") {
+    if (obj.type === "polygon" || obj.type === "boolean") {
       if (Array.isArray(obj.segments) && obj.segments.length > 0) {
         return this.pointAtSegments(obj.segments, clamped, label);
       }
       if (Array.isArray(obj.points) && obj.points.length > 1) {
-        return this.pointAtPolyline(obj.points, clamped, label, true);
+        return this.pointAtPolyline(obj.points, clamped, label, obj.type === "polygon");
       }
     }
     throw new Error(`Unknown or invalid object in pointAt: ${label}`);
@@ -1971,10 +1980,10 @@ export class Evaluator {
     if (obj.type === "path" && Array.isArray(obj.segments) && obj.segments.length > 0) {
       return this.sampleSegmentsAsPolyline(obj.segments);
     }
-    if (obj.type === "polygon" && Array.isArray(obj.segments) && obj.segments.length > 0) {
+    if ((obj.type === "polygon" || obj.type === "boolean") && Array.isArray(obj.segments) && obj.segments.length > 0) {
       return this.sampleSegmentsAsPolyline(obj.segments);
     }
-    if ((obj.type === "path" || obj.type === "polygon") && Array.isArray(obj.points) && obj.points.length > 0) {
+    if ((obj.type === "path" || obj.type === "polygon" || obj.type === "boolean") && Array.isArray(obj.points) && obj.points.length > 0) {
       return obj.points;
     }
 

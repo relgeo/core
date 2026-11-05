@@ -2,7 +2,7 @@ import { ResolvedPoint, PointObject } from "../../types";
 import { normalizeUnit } from "../../units";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";
-import { ResolveContext } from "../types";
+import { ResolveContext, ResolveError } from "../types";
 import { resolveAnchorValue } from "../anchors";
 import { wrapError, resolveCustomAnchors, applyObjectPlacementAndTransform } from "./utils";
 
@@ -88,6 +88,10 @@ export function resolvePoint(id: string, obj: PointObject, ctx: ResolveContext):
         }
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, id);
+    }
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        throw new ResolveError(`Point "${id}" must resolve to finite coordinates`, "INVALID_VALUE", id, "at");
     }
 
     const bbox = { x, y, width: 0, height: 0 };

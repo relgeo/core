@@ -154,9 +154,9 @@ function addClosedShapeHolesDependencies(
         if (Array.isArray(hole.segments)) {
           for (const seg of hole.segments) {
             if ("line" in seg) { addRef(seg.line.from); addRef(seg.line.to); }
-            if ("arc" in seg) { addRef(seg.arc.through); addRef(seg.arc.to); }
-            if ("quadratic" in seg) { addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
-            if ("cubic" in seg) { addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
+            if ("arc" in seg) { addRef(seg.arc.from); addRef(seg.arc.through); addRef(seg.arc.to); }
+            if ("quadratic" in seg) { addRef(seg.quadratic.from); addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
+            if ("cubic" in seg) { addRef(seg.cubic.from); addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
           }
         } else {
           const keys = Object.keys(hole).filter(k => k !== "place");
@@ -191,9 +191,9 @@ function addClosedShapeHolesDependencies(
             if (Array.isArray(holeData.segments)) {
               for (const seg of holeData.segments) {
                 if ("line" in seg) { addRef(seg.line.from); addRef(seg.line.to); }
-                if ("arc" in seg) { addRef(seg.arc.through); addRef(seg.arc.to); }
-                if ("quadratic" in seg) { addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
-                if ("cubic" in seg) { addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
+                if ("arc" in seg) { addRef(seg.arc.from); addRef(seg.arc.through); addRef(seg.arc.to); }
+                if ("quadratic" in seg) { addRef(seg.quadratic.from); addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
+                if ("cubic" in seg) { addRef(seg.cubic.from); addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
               }
             }
           } else if (holeType === "clone") {
@@ -201,9 +201,9 @@ function addClosedShapeHolesDependencies(
           } else if (holeType === "segments" && Array.isArray(holeData)) {
             for (const seg of holeData) {
               if ("line" in seg) { addRef(seg.line.from); addRef(seg.line.to); }
-              if ("arc" in seg) { addRef(seg.arc.through); addRef(seg.arc.to); }
-              if ("quadratic" in seg) { addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
-              if ("cubic" in seg) { addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
+              if ("arc" in seg) { addRef(seg.arc.from); addRef(seg.arc.through); addRef(seg.arc.to); }
+              if ("quadratic" in seg) { addRef(seg.quadratic.from); addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
+              if ("cubic" in seg) { addRef(seg.cubic.from); addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
             }
           }
           const placeObj = hole.place || holeData?.place;
@@ -237,9 +237,9 @@ function addPathDependencies(
     if (Array.isArray(obj.segments)) {
       for (const seg of obj.segments) {
         if ("line" in seg) { addRef(seg.line.from); addRef(seg.line.to); }
-        if ("arc" in seg) { addRef(seg.arc.through); addRef(seg.arc.to); }
-        if ("quadratic" in seg) { addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
-        if ("cubic" in seg) { addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
+        if ("arc" in seg) { addRef(seg.arc.from); addRef(seg.arc.through); addRef(seg.arc.to); }
+        if ("quadratic" in seg) { addRef(seg.quadratic.from); addRef(seg.quadratic.cp); addRef(seg.quadratic.to); }
+        if ("cubic" in seg) { addRef(seg.cubic.from); addRef(seg.cubic.cp1); addRef(seg.cubic.cp2); addRef(seg.cubic.to); }
       }
     }
 

@@ -36,6 +36,34 @@ function resolveInsidePlacement(place: PlaceSpec, ctx: ResolveContext, evalCtx: 
     return { bbox, margin };
 }
 
+function assertFinitePlacement(value: number | undefined, path: string): void {
+    if (value !== undefined && !Number.isFinite(value)) {
+        throw new ResolveError(`Placement value at ${path} must resolve to a finite number`, "INVALID_VALUE", undefined, path);
+    }
+}
+
+function assertFiniteResolvedTransform(transform: ResolvedTransform): void {
+    for (const [index, op] of transform.entries()) {
+        if (op.type === "translate") {
+            if (!Number.isFinite(op.x) || !Number.isFinite(op.y)) {
+                throw new ResolveError(`Transform ${index} contains non-finite translation values`, "INVALID_VALUE", undefined, `transform[${index}]`);
+            }
+        } else if (op.type === "rotate") {
+            if (!Number.isFinite(op.angle) || !Number.isFinite(op.origin.x) || !Number.isFinite(op.origin.y)) {
+                throw new ResolveError(`Transform ${index} contains non-finite rotation values`, "INVALID_VALUE", undefined, `transform[${index}]`);
+            }
+        } else if (op.type === "scale") {
+            if (!Number.isFinite(op.factor[0]) || !Number.isFinite(op.factor[1]) || !Number.isFinite(op.origin.x) || !Number.isFinite(op.origin.y)) {
+                throw new ResolveError(`Transform ${index} contains non-finite scale values`, "INVALID_VALUE", undefined, `transform[${index}]`);
+            }
+        } else if (op.type === "mirror") {
+            if (!["x", "y", "both"].includes(op.axis) || !Number.isFinite(op.origin.x) || !Number.isFinite(op.origin.y)) {
+                throw new ResolveError(`Transform ${index} contains an invalid mirror contract`, "INVALID_VALUE", undefined, `transform[${index}]`);
+            }
+        }
+    }
+}
+
 export function resolvePlaceX(place: PlaceSpec, width: number, ctx: ResolveContext): number {
     const evalCtx = createEvalContext(ctx);
     let val: number | undefined;
@@ -90,6 +118,7 @@ export function resolvePlaceX(place: PlaceSpec, width: number, ctx: ResolveConte
         else val = targetX - width / 2 + offset;
     }
 
+    assertFinitePlacement(val, "place.x");
     return val !== undefined ? val : 0;
 }
 
@@ -155,6 +184,7 @@ export function resolvePlaceY(place: PlaceSpec, height: number, ctx: ResolveCont
         else val = targetY - height / 2 + offset;
     }
 
+    assertFinitePlacement(val, "place.y");
     return val !== undefined ? val : 0;
 }
 
@@ -180,7 +210,11 @@ export function resolveCustomAnchors(
             let py = 0;
 
             if (typeof pos[0] === "string" && pos[0].endsWith("%")) {
-                px = baseX + (parseFloat(pos[0]) / 100) * width;
+                const relativeX = Number(pos[0].slice(0, -1));
+                if (!Number.isFinite(relativeX)) {
+                    throw new ResolveError(`Anchor "${name}" x percentage must be finite`, "INVALID_VALUE", resolved.id, `anchors.${name}[0]`);
+                }
+                px = baseX + (relativeX / 100) * width;
             } else {
                 try {
                   px = baseX + normalizeUnit(evaluateExpression(pos[0], evalCtx), ctx.targetUnit);
@@ -191,7 +225,11 @@ export function resolveCustomAnchors(
             }
 
             if (typeof pos[1] === "string" && pos[1].endsWith("%")) {
-                py = baseY + (parseFloat(pos[1]) / 100) * height;
+                const relativeY = Number(pos[1].slice(0, -1));
+                if (!Number.isFinite(relativeY)) {
+                    throw new ResolveError(`Anchor "${name}" y percentage must be finite`, "INVALID_VALUE", resolved.id, `anchors.${name}[1]`);
+                }
+                py = baseY + (relativeY / 100) * height;
             } else {
                 try {
                   py = baseY + normalizeUnit(evaluateExpression(pos[1], evalCtx), ctx.targetUnit);
@@ -199,6 +237,9 @@ export function resolveCustomAnchors(
                   if (ctx.mode === "editor") py = baseY;
                   else wrapError(e, resolved.id, `anchors.${name}[1]`);
                 }
+            }
+            if (!Number.isFinite(px) || !Number.isFinite(py)) {
+                throw new ResolveError(`Anchor "${name}" must resolve to finite coordinates`, "INVALID_VALUE", resolved.id, `anchors.${name}`);
             }
             result[name] = { x: px, y: py };
         }
@@ -240,6 +281,9 @@ export function applyObjectPlacementAndTransform(
             const keys = Object.keys(op).filter(k => k !== 'origin');
             const type = keys[0];
             const val = op[type];
+            if (!type || !["translate", "rotate", "scale", "mirror"].includes(type)) {
+                throw new ResolveError(`Unsupported transform operation "${String(type)}"`, "INVALID_VALUE", obj.id, "transform");
+            }
             const localOriginRef = op.origin;
             let resolvedOrigin = defaultOrigin;
 
@@ -321,6 +365,8 @@ export function applyObjectPlacementAndTransform(
                 });
             }
         }
+
+        assertFiniteResolvedTransform(resolvedPipeline);
 
         let orientedRotation: any = null;
         if (obj.on) {
@@ -429,6 +475,10 @@ export function applyObjectPlacementAndTransform(
         }
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, obj.id || "");
+    }
+
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+        throw new ResolveError("Placement offsets must resolve to finite coordinates", "INVALID_VALUE", obj.id, "place");
     }
 
     return {

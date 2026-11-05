@@ -222,4 +222,36 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
     expect(resolvedNotch).toBeDefined();
     expect(resolvedNotch.anchors.pt.x).toBeCloseTo(25);
   });
+
+  it("rejects non-finite transform values at the resolver boundary", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        box: {
+          type: "rect",
+          size: [10, 10],
+          transform: [{ translate: [Number.NaN, 0] }],
+        } as any,
+      },
+    };
+
+    expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(/INVALID_VALUE/);
+  });
+
+  it("rejects non-finite custom anchor coordinates instead of publishing NaN", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        box: {
+          type: "rect",
+          size: [10, 10],
+          anchors: { broken: [Number.NaN, 0] },
+        } as any,
+      },
+    };
+
+    expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(/INVALID_VALUE/);
+  });
 });

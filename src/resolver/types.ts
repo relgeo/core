@@ -27,7 +27,10 @@ export class ResolveError extends Error implements RelGeoError {
 
     constructor(
         message: string,
-        public code?: RelGeoErrorCode,
+        // Geometry and other child packages may contribute stable diagnostic
+        // codes at this boundary. Keep the core catalog typed while allowing
+        // those adapter-owned codes to pass through without erasure.
+        public code?: RelGeoErrorCode | string,
         public objectId?: string,
         public path?: string,
         range?: SourceRange

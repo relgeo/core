@@ -66,6 +66,12 @@ describe("v0.4: Reusable Component System (Phase C)", () => {
         }
       },
       objects: {
+        // Deliberately collide with the component-local object name. Each
+        // instance must retain its prefixed namespace.
+        body: {
+          type: "rect",
+          size: [2, 2],
+        } as any,
         hinge1: {
           type: "component",
           use: "myHinge",
@@ -91,6 +97,7 @@ describe("v0.4: Reusable Component System (Phase C)", () => {
     const scene = resolveGeometry(doc, { textMetrics: mockTextMetrics });
     
     // Check that nested body elements were resolved with proper prefixed IDs and params
+    expect((scene.objects.body as any).width).toBe(2);
     const resolvedBody1 = scene.objects["hinge1.body"] as any;
     expect(resolvedBody1).toBeDefined();
     expect(resolvedBody1.width).toBe(40);
@@ -122,6 +129,9 @@ describe("v0.4: Reusable Component System (Phase C)", () => {
             } as any
           }
         }
+      },
+      derived: {
+        doubledWidth: "h1.width * 2",
       },
       objects: {
         h1: {
@@ -155,6 +165,7 @@ describe("v0.4: Reusable Component System (Phase C)", () => {
     const outerWidth = scene.objects["outerWidth"] as any;
     expect(topPt.y).toBe(0);
     expect(outerWidth.x).toBe(30);
+    expect((scene.values as any).doubledWidth).toBe(60);
 
     // Now verify that accessing private/non-exported keys is BLOCKED!
     const invalidDoc: RelGeoDocument = {

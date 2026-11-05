@@ -25,7 +25,11 @@ export function resolveClone(
     const childObjects: Record<string, any> = { [targetId]: target };
     const bbox = calculateBoundingBox(childObjects);
 
-    const { resolvedTransform, dx, dy } = applyObjectPlacementAndTransform(obj, bbox, ctx);
+    // A clone uses the target's local bbox. Resolve its custom anchors before
+    // placement so `place: { anchorName: ... }` can target the clone anchor.
+    const localAnchorOwner = { id, type: "group", children: [targetId] };
+    const localAnchors = resolveCustomAnchors(obj, localAnchorOwner, ctx, bbox);
+    const { resolvedTransform, dx, dy } = applyObjectPlacementAndTransform(obj, bbox, ctx, localAnchors);
 
     // For clones, we must add the translate to the pipeline since they don't have x, y
     const finalTransform = resolvedTransform || [];
@@ -42,6 +46,6 @@ export function resolveClone(
         meta: obj.meta,
     };
 
-    resolved.anchors = resolveCustomAnchors(obj, resolved, ctx, bbox);
+    resolved.anchors = localAnchors;
     return resolved;
 }

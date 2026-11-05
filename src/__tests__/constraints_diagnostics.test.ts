@@ -3,6 +3,29 @@ import { resolveGeometry } from '../resolver';
 import { RelGeoDocument } from '../types';
 
 describe('Constraint Diagnostics', () => {
+    it('accepts the complete valid relation matrix without mutating the scene', () => {
+        const doc: RelGeoDocument = {
+            version: '1.0',
+            objects: {
+                horizontal: { type: 'line', from: [-20, 0], to: [20, 0] },
+                horizontalOffset: { type: 'line', from: [-20, 10], to: [20, 10] },
+                vertical: { type: 'line', from: [0, -20], to: [0, 20] },
+                tangent: { type: 'line', from: [-20, 10], to: [20, 10] },
+                circle: { type: 'circle', center: [0, 0], radius: 10 },
+            },
+            constraints: [
+                { equal: ['horizontal.length', 'horizontalOffset.length'] },
+                { parallel: ['horizontal', 'horizontalOffset'] },
+                { perpendicular: ['horizontal', 'vertical'] },
+                { tangent: ['tangent', 'circle'] },
+            ],
+        };
+
+        const result = resolveGeometry(doc);
+        expect(result.violations).toEqual([]);
+        expect(result.objects.horizontal).toMatchObject({ type: 'line', x1: -20, x2: 20 });
+    });
+
     it('should report align violation for non-aligned points', () => {
         const doc: RelGeoDocument = {
             version: '1.0',

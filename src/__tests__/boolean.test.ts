@@ -42,6 +42,15 @@ describe("v0.4: Robust 2D Closed-Shape Boolean Operations", () => {
     // Center should be (7.5, 5) since bounding box runs from x=0 to 15, y=0 to 10
     expect(evaluateExpression("merged.centerX", evalCtx)).toBeCloseTo(7.5);
     expect(evaluateExpression("merged.centerY", evalCtx)).toBeCloseTo(5);
+    expect(evaluateExpression("perimeter(merged)", evalCtx)).toBeCloseTo(50);
+    expect(evaluateExpression("bbox(merged)", evalCtx)).toEqual({
+      minX: 0,
+      maxX: 15,
+      minY: 0,
+      maxY: 10,
+      width: 15,
+      height: 10,
+    });
   });
 
   it("resolves a subtraction of slot from panel", () => {
@@ -74,6 +83,42 @@ describe("v0.4: Robust 2D Closed-Shape Boolean Operations", () => {
 
     // Subtracting slot (20 * 20 = 400) from panel (100 * 100 = 10000) = 9600
     expect(evaluateExpression("cutPanel.area", evalCtx)).toBeCloseTo(9600);
+    expect(evaluateExpression("perimeter(cutPanel)", evalCtx)).toBeCloseTo(480);
+  });
+
+  it("resolves xor as deterministic multipart topology and exposes measurements", () => {
+    const doc: RelGeoDocument = {
+      version: 0.4,
+      objects: {
+        left: { type: "rect", size: [10, 10], place: { left: 0, top: 0 } },
+        right: { type: "rect", size: [10, 10], place: { left: 5, top: 0 } },
+        symmetricDifference: {
+          type: "boolean",
+          operation: "xor",
+          shapes: ["left", "right"],
+          result: { mode: "multi" },
+        },
+      },
+    };
+
+    const res = resolveGeometry(doc);
+    const evalCtx = createEvalContext({
+      scalars: {},
+      objects: res.objects,
+      targetUnit: "px",
+      textMetrics: mockTextMetrics,
+    });
+
+    expect((res.objects.symmetricDifference as ResolvedBoolean).points?.length ?? 0).toBeGreaterThan(4);
+    expect(evaluateExpression("area(symmetricDifference)", evalCtx)).toBeCloseTo(100);
+    expect(evaluateExpression("bbox(symmetricDifference)", evalCtx)).toEqual({
+      minX: 0,
+      maxX: 15,
+      minY: 0,
+      maxY: 10,
+      width: 15,
+      height: 10,
+    });
   });
 
   it("preserves nested semantic holes and supports holes[index] anchor access", () => {

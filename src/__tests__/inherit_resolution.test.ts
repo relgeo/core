@@ -3,6 +3,43 @@ import { resolveGeometry } from "../resolver";
 import type { RelGeoDocument, ResolvedLine } from "../types";
 
 describe("inherit resolution", () => {
+  it("re-evaluates inherited and overridden component parameters in dependency order", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      constants: {
+        sizes: { base: 4 },
+      },
+      components: {
+        dependentPanel: {
+          parameters: {
+            height: { type: "number", default: 15 },
+            width: { type: "number", default: 10 },
+            base: { type: "number", default: 1 },
+          },
+          objects: {
+            panel: { type: "rect", size: ["width", "height"] } as any,
+          },
+        },
+      },
+      objects: {
+        panel1: {
+          type: "component",
+          use: "dependentPanel",
+          // Reverse declaration order is intentional.
+          params: {
+            inherit: "sizes",
+            height: "width + 5",
+            width: "base * 2",
+          },
+        } as any,
+      },
+    };
+
+    const panel = resolveGeometry(doc).objects["panel1.panel"] as any;
+    expect(panel.width).toBe(8);
+    expect(panel.height).toBe(13);
+  });
+
   it("applies ordered multiple inherit on component params before local overrides", () => {
     const doc: RelGeoDocument = {
       version: 0.5,

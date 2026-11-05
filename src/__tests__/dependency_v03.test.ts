@@ -48,6 +48,36 @@ describe("Dependency Ordering v0.3", () => {
     expect(sorted.indexOf("H2")).toBeLessThan(sorted.indexOf("p1"));
   });
 
+  it("orders explicit curve segment endpoints and hole controls before their path", () => {
+    const objects: any = {
+      shape: {
+        type: "path",
+        segments: [
+          { cubic: { from: "A", cp1: "B", cp2: "C", to: "D" } },
+        ],
+        holes: [
+          {
+            segments: [
+              { quadratic: { from: "E", cp: "F", to: "G" } },
+            ],
+          },
+        ],
+      },
+      A: { type: "point", at: [0, 0] },
+      B: { type: "point", at: [2, 4] },
+      C: { type: "point", at: [8, 4] },
+      D: { type: "point", at: [10, 0] },
+      E: { type: "point", at: [3, 1] },
+      F: { type: "point", at: [4, 2] },
+      G: { type: "point", at: [5, 1] },
+    };
+
+    const sorted = sortObjects(objects);
+    for (const dependency of ["A", "B", "C", "D", "E", "F", "G"]) {
+      expect(sorted.indexOf(dependency)).toBeLessThan(sorted.indexOf("shape"));
+    }
+  });
+
   it("should canonicalize cycle diagnostics independent of declaration order", () => {
     const firstOrder: any = {
       A: { type: "point", at: "B" },
