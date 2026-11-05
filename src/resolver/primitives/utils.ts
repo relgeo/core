@@ -2,16 +2,38 @@ import type { BoundingBox, ResolvedTransform, PlaceSpec } from "../../types";
 import { normalizeUnit } from "../../units";
 import { evaluateExpression } from "../../evaluator";
 import { ResolveContext, ResolveError } from "../types";
-import { normalizeErrorCode, stripErrorCodePrefix } from "../../errors";
+import { hasStructuredDiagnostic, normalizeErrorCode, stripErrorCodePrefix } from "../../errors";
 import { createEvalContext } from "../eval-context";
 import { resolveAnchorValue } from "../anchors";
 import { calculateBoundingBox, getObjectBoundingBox } from "../geometry-utils";
 
 export function wrapError(e: any, id: string, path?: string): never {
     if (e instanceof ResolveError) throw e;
+    if (hasStructuredDiagnostic(e)) throw e;
     const rawMessage = e instanceof Error ? e.message : String(e);
     const code = normalizeErrorCode(e?.code, rawMessage, "RESOLVE_ERROR");
     throw new ResolveError(stripErrorCodePrefix(rawMessage), code, id, path);
+}
+
+function resolveInsidePlacement(place: PlaceSpec, ctx: ResolveContext, evalCtx: ReturnType<typeof createEvalContext>) {
+    const targetId = place.inside;
+    if (targetId === undefined || !ctx.objects[targetId]) {
+        throw new ResolveError(`Invalid expression syntax: Unknown identifier: ${targetId}`, "INVALID_EXPRESSION");
+    }
+    const target = ctx.objects[targetId];
+    if (target.type !== "rect") {
+        throw new ResolveError(`place.inside target "${targetId}" must be a rect`, "INVALID_VALUE");
+    }
+
+    const bbox = getObjectBoundingBox(targetId, ctx.objects);
+    let margin = 0;
+    if (place.margin !== undefined) {
+        margin = Number(normalizeUnit(evaluateExpression(place.margin, evalCtx), ctx.targetUnit));
+        if (!Number.isFinite(margin) || margin < 0) {
+            throw new ResolveError(`place.inside margin must be a non-negative finite length`, "INVALID_VALUE");
+        }
+    }
+    return { bbox, margin };
 }
 
 export function resolvePlaceX(place: PlaceSpec, width: number, ctx: ResolveContext): number {
@@ -28,18 +50,10 @@ export function resolvePlaceX(place: PlaceSpec, width: number, ctx: ResolveConte
         const p = resolveAnchorValue(place.center, ctx);
         val = (typeof p === "number" ? p : p.x) - width / 2;
     } else if (place.inside !== undefined) {
-        const target = ctx.objects[place.inside];
-        if (target) {
-            const bbox = getObjectBoundingBox(place.inside, ctx.objects);
-            if (place.margin !== undefined) {
-                const margin = normalizeUnit(evaluateExpression(place.margin, evalCtx), ctx.targetUnit);
-                val = bbox.x + margin;
-            } else {
-                val = bbox.x + (bbox.width - width) / 2;
-            }
-        } else {
-            throw new ResolveError(`Invalid expression syntax: Unknown identifier: ${place.inside}`, "INVALID_EXPRESSION");
-        }
+        const { bbox, margin } = resolveInsidePlacement(place, ctx, evalCtx);
+        val = place.margin !== undefined
+            ? bbox.x + margin
+            : bbox.x + (bbox.width - width) / 2;
     } else if (place.topLeft !== undefined) {
         const p = resolveAnchorValue(place.topLeft, ctx);
         val = typeof p === "number" ? p : p.x;
@@ -101,18 +115,10 @@ export function resolvePlaceY(place: PlaceSpec, height: number, ctx: ResolveCont
         const p = resolveAnchorValue(place.center, ctx);
         val = (typeof p === "number" ? p : p.y) - height / 2;
     } else if (place.inside !== undefined) {
-        const target = ctx.objects[place.inside];
-        if (target) {
-            const bbox = getObjectBoundingBox(place.inside, ctx.objects);
-            if (place.margin !== undefined) {
-                const margin = normalizeUnit(evaluateExpression(place.margin, evalCtx), ctx.targetUnit);
-                val = bbox.y + margin;
-            } else {
-                val = bbox.y + (bbox.height - height) / 2;
-            }
-        } else {
-            throw new ResolveError(`Invalid expression syntax: Unknown identifier: ${place.inside}`, "INVALID_EXPRESSION");
-        }
+        const { bbox, margin } = resolveInsidePlacement(place, ctx, evalCtx);
+        val = place.margin !== undefined
+            ? bbox.y + margin
+            : bbox.y + (bbox.height - height) / 2;
     } else if (place.topLeft !== undefined) {
         const p = resolveAnchorValue(place.topLeft, ctx);
         val = typeof p === "number" ? p : p.y;

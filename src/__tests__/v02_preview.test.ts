@@ -89,6 +89,20 @@ describe("RelGeo v0.2 Preview Features", () => {
     expect(t1.content).toBe("Hello");
   });
 
+  it("uses the normative center default for text in RelGeo 0.5", () => {
+    const scene = resolveGeometry({
+      version: "0.5",
+      objects: {
+        label: { type: "text", at: [50, 60] as any, content: "Hello" }
+      }
+    });
+
+    const label = scene.objects.label as any;
+    expect(label.anchor).toBe("center");
+    expect(label.x).toBeCloseTo(32);
+    expect(label.y).toBeCloseTo(54);
+  });
+
   it("should resolve text anchor placement from point", () => {
     const doc: RelGeoDocument = {
       version: "0.3",

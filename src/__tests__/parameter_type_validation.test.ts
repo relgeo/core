@@ -80,6 +80,28 @@ objects: {}
     expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
   });
 
+  it("should accept inch length literals and reject malformed numeric literals", () => {
+    const validYaml = `
+version: 0.5
+parameters:
+  spacing:
+    type: length
+    default: "1in"
+objects: {}
+`;
+    expect(() => parseRelGeo(validYaml, { mode: "validate" })).not.toThrow();
+
+    const malformedYaml = `
+version: 0.5
+parameters:
+  spacing:
+    type: length
+    default: "10..5mm"
+objects: {}
+`;
+    expect(() => parseRelGeo(malformedYaml, { mode: "validate" })).toThrow("Value must be a valid length");
+  });
+
   it("should reject invalid angle formats", () => {
     const yaml = `
 version: 0.4
@@ -126,6 +148,110 @@ parameters:
   startPos:
     type: point
     default: ["10mm", "20cm"]
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
+  });
+
+  it("should accept inch point coordinates", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  origin:
+    type: point
+    default: ["1in", "2in"]
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
+  });
+
+  it("should reject profile overrides with an incompatible declared type", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  width:
+    type: length
+    default: 10mm
+profiles:
+  compact:
+    width: true
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      path: "profiles.compact.width",
+    }));
+  });
+
+  it("should reject profile overrides for undeclared parameters", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  width:
+    type: length
+    default: 10mm
+profiles:
+  compact:
+    height: 20mm
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_FIELD",
+      path: "profiles.compact.height",
+    }));
+  });
+
+  it("should reject profile overrides for constants", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  width:
+    type: length
+    default: 10mm
+constants:
+  gap: 2mm
+profiles:
+  compact:
+    gap: 1mm
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_FIELD",
+      path: "profiles.compact.gap",
+    }));
+  });
+
+  it("should reject a profile whose override map is not an object", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  width:
+    type: length
+    default: 10mm
+profiles:
+  compact: [20mm]
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      path: "profiles.compact",
+    }));
+  });
+
+  it("should continue accepting valid typed profile overrides", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  width:
+    type: length
+    default: 10mm
+  rotation:
+    type: angle
+    default: 0deg
+profiles:
+  compact:
+    width: 20mm
+    rotation: 1.5rad
 objects: {}
 `;
     expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();

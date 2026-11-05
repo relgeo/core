@@ -182,6 +182,42 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
     expect(c1.cy).toBeCloseTo(60, 2);
   });
 
+  it("rejects non-positive or non-finite polar radius at resolve time", () => {
+    const invalidRadius = {
+      version: 0.5,
+      objects: {
+        center: { type: "point", at: [0, 0] },
+        polar: {
+          type: "repeat",
+          polar: { count: 4, center: "center", radius: -1 },
+          item: { type: "point", at: [0, 0] },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(invalidRadius, { mode: "editor" })).toThrow(/polar radius must be a positive finite length/);
+  });
+
+  it("rejects fractional and non-finite divide counts without rounding or looping", () => {
+    const fractionalCount = {
+      version: 0.5,
+      objects: {
+        line: { type: "line", from: [0, 0], to: [10, 0] },
+        pieces: { type: "divide", target: "line", count: 2.5 },
+      },
+    } as any;
+    expect(() => resolveGeometry(fractionalCount, { mode: "editor" })).toThrow(/Invalid count in divide object/);
+
+    const nonFiniteCount = {
+      version: 0.5,
+      objects: {
+        line: { type: "line", from: [0, 0], to: [10, 0] },
+        pieces: { type: "divide", target: "line", count: Number.POSITIVE_INFINITY },
+      },
+    } as any;
+    expect(() => resolveGeometry(nonFiniteCount, { mode: "editor" })).toThrow(/Invalid count in divide object/);
+  });
+
   it("handles each repeat over explicit coordinates and divide collections", () => {
     const doc: RelGeoDocument = {
       version: 0.4,
@@ -580,6 +616,41 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
     expect((scene.objects["pegs[3]"] as any).y).toBeCloseTo(90, 1);
   });
 
+  it("does not duplicate the start point for uniform-t on a closed path", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        frame: {
+          type: "polygon",
+          points: [[0, 0], [100, 0], [100, 100], [0, 100]],
+        } as any,
+        marks: {
+          type: "repeat",
+          along: {
+            target: "frame",
+            count: 4,
+            spacing: "uniform-t",
+          },
+          item: {
+            type: "point",
+            at: "item.point",
+          } as any,
+        } as any,
+      },
+    };
+
+    const scene = resolveGeometry(doc, { textMetrics: mockTextMetrics });
+    const points = [0, 1, 2, 3].map((index) => scene.objects[`marks[${index}]`] as any);
+    expect(points.map((point) => [point.x, point.y])).toEqual([
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ]);
+    expect(points[3]).not.toEqual(points[0]);
+  });
+
   it("rejects repeat.along fixed-distance when count is explicitly provided", () => {
     const doc: RelGeoDocument = {
       version: 0.5,
@@ -608,5 +679,34 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
 
     const validator = new Validator(doc);
     expect(() => validator.validate()).toThrow("INVALID_REPEAT_ALONG_SPACING");
+  });
+
+  it("rejects negative along offsets at resolve time", () => {
+    const doc = {
+      version: 0.5,
+      objects: {
+        guide: {
+          type: "line",
+          from: [0, 0],
+          to: [100, 0]
+        },
+        badRepeat: {
+          type: "repeat",
+          along: {
+            target: "guide",
+            spacing: "uniform-length",
+            count: 3,
+            startOffset: -1
+          },
+          item: {
+            type: "point",
+            at: "item.point"
+          }
+        }
+      }
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor", textMetrics: mockTextMetrics }))
+      .toThrow(/repeat\.along offsets must be finite and non-negative/);
   });
 });

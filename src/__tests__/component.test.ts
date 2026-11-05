@@ -9,6 +9,44 @@ const mockTextMetrics = {
 };
 
 describe("v0.4: Reusable Component System (Phase C)", () => {
+  it("resolves dependent component defaults in local parameter order", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      components: {
+        dependentPanel: {
+          parameters: {
+            // Deliberately declared after the parameters that consume it.
+            height: { type: "number", default: 25 },
+            width: { type: "number", default: 20 },
+            base: { type: "number", default: 10 },
+          },
+          objects: {
+            panel: {
+              type: "rect",
+              size: ["width", "height"],
+            } as any,
+          },
+        },
+      },
+      objects: {
+        instance: {
+          type: "component",
+          use: "dependentPanel",
+          // Deliberately supplied in reverse dependency order.
+          params: { height: "width + 5", width: "base * 2", base: 12 },
+        } as any,
+      },
+    };
+
+    const scene = resolveGeometry(doc);
+    expect(scene.objects["instance.panel"]).toMatchObject({
+      type: "rect",
+      width: 24,
+      height: 29,
+    });
+  });
+
   it("resolves basic component instances with default and overridden parameters", () => {
     const doc: RelGeoDocument = {
       version: 0.4,

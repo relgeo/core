@@ -1,5 +1,5 @@
 import { ResolvedClone, CloneObject } from "../../types";
-import { ResolveContext } from "../types";
+import { ResolveContext, ResolveError } from "../types";
 import { calculateBoundingBox } from "../geometry-utils";
 import { wrapError, resolveCustomAnchors, applyObjectPlacementAndTransform } from "./utils";
 
@@ -12,7 +12,12 @@ export function resolveClone(
     const target = ctx.objects[targetId];
 
     if (!target) {
-        throw new Error(`Clone target "${targetId}" not found or not yet resolved.`);
+        throw new ResolveError(
+            `Clone target "${targetId}" not found or not yet resolved.`,
+            "UNKNOWN_REFERENCE",
+            id,
+            `objects.${id}.of`,
+        );
     }
 
     // A clone is a virtual group containing the target.

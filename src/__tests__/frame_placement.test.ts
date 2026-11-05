@@ -94,6 +94,32 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
     expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(/FRAME_RESOLUTION_FAILED/);
   });
 
+  it("fails resolution if frameAt receives a non-finite t", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      parameters: {
+        t: { type: "number", default: Number.POSITIVE_INFINITY }
+      },
+      objects: {
+        L: {
+          type: "line",
+          from: [0, 0],
+          to: [100, 0]
+        } as any,
+        box: {
+          type: "rect",
+          size: [10, 10],
+          on: { frame: { path: "L", t: "t" } }
+        } as any
+      }
+    };
+
+    const validator = new Validator(doc);
+    expect(() => validator.validate()).not.toThrow();
+    expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(/FRAME_RESOLUTION_FAILED/);
+  });
+
   it("correctly applies oriented placement to place a rectangle on an angled line", () => {
     const doc: RelGeoDocument = {
       version: 0.4,
@@ -197,4 +223,3 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
     expect(resolvedNotch.anchors.pt.x).toBeCloseTo(25);
   });
 });
-

@@ -17,6 +17,7 @@ const RUNTIME_CODES = new Set<RelGeoErrorCode>([
   "BOOLEAN_FAILED",
   "BOOLEAN_MULTIPART_RESULT",
   "FRAME_RESOLUTION_FAILED",
+  "INVALID_COLLECTION_ACCESS",
   "INVALID_T_AT_LENGTH",
   "PATH_LENGTH_UNAVAILABLE",
   "INVALID_RESOLVED_SCENE",
@@ -71,6 +72,15 @@ export interface CoreErrorOptions {
   range?: SourceRange;
 }
 
+/** Identify an exception that already carries the public diagnostic payload. */
+export function hasStructuredDiagnostic(
+  error: unknown,
+): error is Error & Pick<RelGeoError, "phase" | "code"> {
+  if (!(error instanceof Error) || typeof error !== "object") return false;
+  const candidate = error as Partial<RelGeoError>;
+  return typeof candidate.phase === "string" && typeof candidate.code === "string";
+}
+
 /** True when a code is part of the public core error catalog. */
 export function isRelGeoErrorCode(value: unknown): value is RelGeoErrorCode {
   return typeof value === "string" && ERROR_CODE_SET.has(value);
@@ -82,6 +92,31 @@ export function stripErrorCodePrefix(message: string): string {
 
 function codeFromMessage(message: string): RelGeoErrorCode | undefined {
   const lower = message.toLowerCase();
+  // Keep raw internal evaluator/resolver messages actionable when they reach
+  // a public boundary. These mappings are deliberately phrase-based because
+  // the underlying helpers still throw ordinary Error instances internally.
+  if (lower.includes("invalid_t_parameter")) return "INVALID_VALUE";
+  if (lower.includes("unsupported object selector") || lower.includes("unknown intersection selector")) {
+    return "INVALID_INTERSECTION_SELECTOR";
+  }
+  if (lower.includes("index out of bounds") && lower.includes("collection")) {
+    return "INVALID_COLLECTION_ACCESS";
+  }
+  if (lower.includes("tangent") && lower.includes("zero length")) return "TANGENT_NOT_FOUND";
+  if (lower.includes("path ") && lower.includes("must be closed")) return "PATH_NOT_CLOSED";
+  if (lower.includes("path ") && lower.includes("zero length")) return "PATH_LENGTH_UNAVAILABLE";
+  if (lower.includes("unknown object in") || lower.includes("unknown reference in") || lower.includes("unknown base object") || lower.includes("unknown tool object") || lower.includes("unknown shape operand")) {
+    return "UNKNOWN_REFERENCE";
+  }
+  if (lower.includes("unknown object type")) return "INVALID_OBJECT_TYPE";
+  if (lower.includes("cannot access member") || lower.includes("cannot index into") || lower.includes("only allowed on numbers")) {
+    return "TYPE_MISMATCH";
+  }
+  if (lower.includes("missing closing") || lower.includes("expected ')' ") || lower.includes("expected argument")) {
+    return "INVALID_EXPRESSION";
+  }
+  if (lower.includes("non-finite number at")) return "INVALID_RESOLVED_SCENE";
+  if (lower.includes("expected json")) return "INVALID_RESOLVED_SCENE";
   if (lower.includes("division by zero")) return "DIVISION_BY_ZERO";
   if (lower.includes("unknown identifier")) return "UNKNOWN_IDENTIFIER";
   if (lower.includes("unknown anchor")) return "UNKNOWN_ANCHOR";
@@ -89,6 +124,8 @@ function codeFromMessage(message: string): RelGeoErrorCode | undefined {
   if (lower.includes("unknown function")) return "UNKNOWN_FUNCTION";
   if (lower.includes("invalid object type")) return "INVALID_OBJECT_TYPE";
   if (lower.includes("unknown field")) return "UNKNOWN_FIELD";
+  if (lower.includes("unsupported feature")) return "UNSUPPORTED_FEATURE";
+  if (lower.includes("invalid parameter") || lower.includes("invalid arguments")) return "INVALID_VALUE";
   if (lower.includes("missing required field") || lower.includes("requires ")) {
     return "MISSING_REQUIRED_FIELD";
   }

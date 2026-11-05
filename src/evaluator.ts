@@ -1,8 +1,8 @@
-import type { LengthUnit, ResolvedObject } from "./types";
+import type { LengthUnit, RelGeoError, ResolvedObject } from "./types";
 import { normalizeUnit } from "./units";
 import { intersectLines, computeIntersections, applySelector, type IntersectionSelector } from "./resolver/intersection";
 import { applyTransformPipeline } from "./resolver/transform-utils";
-import { CoreError, normalizeErrorCode, stripErrorCodePrefix } from "./errors";
+import { CoreError, hasStructuredDiagnostic, normalizeErrorCode, stripErrorCodePrefix } from "./errors";
 
 export interface EvalContext {
   scalars: Record<string, any>;
@@ -44,7 +44,21 @@ function normalizeEvaluatorError(
   error: unknown,
   phase: "validate" | "resolve",
 ): CoreError {
-  if (error instanceof CoreError && error.phase === phase) return error;
+  // A structured error already has an intentional phase. Preserve it even
+  // when an evaluator is used by a different public entry point.
+  if (error instanceof CoreError) return error;
+  if (hasStructuredDiagnostic(error)) {
+    const candidate = error as Error & Partial<RelGeoError> & Pick<RelGeoError, "phase" | "code">;
+    const code = normalizeErrorCode(candidate.code, candidate.message, "UNKNOWN_ERROR");
+    return new CoreError(stripErrorCodePrefix(candidate.message), code, {
+      phase: candidate.phase ?? "resolve",
+      severity: candidate.severity,
+      path: candidate.path,
+      objectId: candidate.objectId,
+      dependencyChain: candidate.dependencyChain,
+      range: candidate.range,
+    });
+  }
   const candidate = error && typeof error === "object"
     ? error as { code?: unknown; path?: string; objectId?: string }
     : {};
@@ -675,9 +689,7 @@ export class Evaluator {
             else {
               const subEval = new Evaluator(this.context, this.options);
               const t = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(t)) {
-                throw new Error(`Invalid parameter t in pointAt: ${args[1]}`);
-              }
+      this.validatePathParameter(t, args[0], "pointAt");
               computedVal = this.getPointAtObject(obj, t, args[0]);
             }
           } else if (token === "closestPoint") {
@@ -707,7 +719,7 @@ export class Evaluator {
             else {
               const subEval = new Evaluator(this.context, this.options);
               const t = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(t)) throw new Error(`Invalid parameter t in tangentAt: ${args[1]}`);
+              this.validatePathParameter(t, args[0], "tangentAt");
               computedVal = this.getTangentAtObject(obj, t, args[0]);
             }
           } else if (token === "normalAt") {
@@ -716,7 +728,7 @@ export class Evaluator {
             else {
               const subEval = new Evaluator(this.context, this.options);
               const t = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(t)) throw new Error(`Invalid parameter t in normalAt: ${args[1]}`);
+              this.validatePathParameter(t, args[0], "normalAt");
               computedVal = this.getNormalAtObject(obj, t, args[0]);
             }
           } else if (token === "frameAt") {
@@ -734,7 +746,7 @@ export class Evaluator {
             } else {
               const subEval = new Evaluator(this.context, this.options);
               const t = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(t)) throw new Error(`Invalid parameter t in frameAt: ${args[1]}`);
+              if (!Number.isFinite(t)) throw new Error(`FRAME_RESOLUTION_FAILED: parameter t must be finite, got ${t}`);
               if (t < 0 || t > 1) {
                 throw new Error(`FRAME_RESOLUTION_FAILED: parameter t must be between 0 and 1, got ${t}`);
               }
@@ -979,6 +991,12 @@ export class Evaluator {
     return this.applyGeometryOperationPoint(point, obj);
   }
 
+  private validatePathParameter(t: number, label: string, query: string): void {
+    if (!Number.isFinite(t) || t < 0 || t > 1) {
+      throw new Error(`INVALID_VALUE: ${query} parameter t must be between 0 and 1, got ${t} for "${label}"`);
+    }
+  }
+
   private getLengthFromObject(obj: any, label: string): number {
     if (this.isGeometryOperationObject(obj)) {
       const target = this.getGeometryOperationTarget(obj, label);
@@ -1107,13 +1125,16 @@ export class Evaluator {
 
   private getPerimeterFromObject(obj: any, label: string): number {
     if (obj.type === "rect" || obj.type === "circle" || obj.type === "ellipse" || obj.type === "polygon") {
-      return this.getLengthFromObject(obj, label);
+      return this.getLengthFromObject(obj, label) + this.getHolePerimeter(obj, label);
     }
     if (obj.type === "path") {
       if (!obj.closed) {
         throw new Error(`Path "${label}" must be closed to expose perimeter`);
       }
-      return this.getLengthFromObject(obj, label);
+      return this.getLengthFromObject(obj, label) + this.getHolePerimeter(obj, label);
+    }
+    if (obj.type === "boolean") {
+      return this.getLengthFromObject(obj, label) + this.getHolePerimeter(obj, label);
     }
     if (this.isGeometryOperationObject(obj)) {
       return this.getLengthFromObject(obj, label);
@@ -1131,23 +1152,29 @@ export class Evaluator {
       return baseArea * Math.abs(scaleOp.factor[0] * scaleOp.factor[1]);
     }
 
-    if (obj.type === "rect") return obj.width * obj.height;
-    if (obj.type === "circle") return Math.PI * obj.radius * obj.radius;
-    if (obj.type === "ellipse") return Math.PI * obj.rx * obj.ry;
+    if (obj.type === "rect") return this.subtractHoleArea(obj.width * obj.height, obj);
+    if (obj.type === "circle") return this.subtractHoleArea(Math.PI * obj.radius * obj.radius, obj);
+    if (obj.type === "ellipse") return this.subtractHoleArea(Math.PI * obj.rx * obj.ry, obj);
     if (obj.type === "polygon") {
       if (Array.isArray(obj.segments) && obj.segments.length > 0) {
-        return this.areaFromSegments(obj.segments);
+        return this.subtractHoleArea(this.areaFromClosedSegments(obj.segments), obj);
       }
-      return this.polygonArea(obj.points ?? []);
+      return this.subtractHoleArea(this.polygonArea(obj.points ?? []), obj);
     }
     if (obj.type === "path") {
       if (!obj.closed) {
         throw new Error(`Path "${label}" must be closed to expose area`);
       }
       if (Array.isArray(obj.segments) && obj.segments.length > 0) {
-        return this.areaFromSegments(obj.segments);
+        return this.subtractHoleArea(this.areaFromClosedSegments(obj.segments), obj);
       }
-      return this.polygonArea(obj.points ?? []);
+      return this.subtractHoleArea(this.polygonArea(obj.points ?? []), obj);
+    }
+    if (obj.type === "boolean") {
+      const baseArea = Array.isArray(obj.segments) && obj.segments.length > 0
+        ? this.areaFromClosedSegments(obj.segments)
+        : this.polygonArea(obj.points ?? []);
+      return this.subtractHoleArea(baseArea, obj);
     }
     throw new Error(`Unknown or invalid object in area: ${label}`);
   }
@@ -1279,6 +1306,10 @@ export class Evaluator {
   }
 
   private getTangentAtObject(obj: any, t: number, label: string): { x: number; y: number } {
+    const length = this.getLengthFromObject(obj, label);
+    if (!Number.isFinite(length) || length <= 0) {
+      throw new Error(`TANGENT_NOT_FOUND: Path "${label}" has zero length`);
+    }
     const clamped = Math.min(Math.max(t, 0), 1);
     const EPS = 1e-6;
 
@@ -1819,6 +1850,47 @@ export class Evaluator {
   private areaFromSegments(segments: any[]): number {
     const points = this.sampleSegmentsAsPolyline(segments);
     return this.polygonArea(points);
+  }
+
+  private areaFromClosedSegments(segments: any[]): number {
+    let total = 0;
+    let loop: any[] = [];
+    for (const segment of segments) {
+      if (loop.length > 0) {
+        const previous = loop[loop.length - 1];
+        const gap = Math.hypot(segment.x1 - previous.x2, segment.y1 - previous.y2);
+        if (gap > 1e-3) {
+          total += this.areaFromSegments(loop);
+          loop = [];
+        }
+      }
+      loop.push(segment);
+    }
+    if (loop.length > 0) total += this.areaFromSegments(loop);
+    return total;
+  }
+
+  private subtractHoleArea(baseArea: number, obj: any): number {
+    const holeArea = Array.isArray(obj.holes)
+      ? obj.holes.reduce((total: number, hole: any) => {
+          if (Array.isArray(hole?.segments) && hole.segments.length > 0) {
+            return total + this.areaFromClosedSegments(hole.segments);
+          }
+          return total;
+        }, 0)
+      : 0;
+    return Math.max(0, baseArea - holeArea);
+  }
+
+  private getHolePerimeter(obj: any, label: string): number {
+    if (!Array.isArray(obj.holes)) return 0;
+    return obj.holes.reduce((total: number, hole: any, index: number) => {
+      if (!Array.isArray(hole?.segments) || hole.segments.length === 0) return total;
+      return total + this.getLengthFromObject(
+        { type: "path", closed: true, segments: hole.segments },
+        `${label}.holes[${index}]`
+      );
+    }, 0);
   }
 
   private sampleSegmentsAsPolyline(segments: any[]): { x: number; y: number }[] {

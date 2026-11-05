@@ -3,9 +3,11 @@ import {
   collectDiagnostics,
   evaluateExpression,
   parseRelGeo,
+  resolveGeometry,
   sortDiagnostics,
   toDiagnostic,
 } from "../index";
+import { CoreError } from "../errors";
 
 describe("public diagnostic contract", () => {
   it("aggregates independent local validation failures in stable order", () => {
@@ -61,6 +63,33 @@ objects:
     });
   });
 
+  it("preserves runtime phase and object context in collected diagnostics", () => {
+    const diagnostics = collectDiagnostics(`version: 0.5
+objects:
+  left:
+    type: rect
+    size: [10, 10]
+    place:
+      topLeft: [0, 0]
+  right:
+    type: rect
+    size: [10, 10]
+    place:
+      topLeft: [20, 0]
+  empty:
+    type: boolean
+    operation: intersect
+    shapes: [left, right]
+`);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      code: "BOOLEAN_EMPTY_RESULT",
+      phase: "runtime",
+      objectId: "empty",
+      path: "objects.empty",
+    }));
+  });
+
   it("normalizes unregistered codes instead of leaking them", () => {
     const diagnostic = toDiagnostic(new Error("NOT_REGISTERED: internal failure"), {
       phase: "resolve",
@@ -82,6 +111,81 @@ objects:
       code: "DIVISION_BY_ZERO",
       phase: "resolve",
       severity: "error",
+    }));
+  });
+
+  it("preserves a structured evaluator phase across the public helper", () => {
+    expect(() => evaluateExpression("custom()", {
+      scalars: {},
+      targetUnit: "px",
+      callFunction: () => {
+        throw new CoreError("runtime callback failed", "INVALID_VALUE", {
+          phase: "runtime",
+          path: "custom",
+        });
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      phase: "runtime",
+      path: "custom",
+    }));
+  });
+
+  it("preserves compatible structured errors that are not CoreError instances", () => {
+    const callbackError = Object.assign(new Error("runtime callback failed"), {
+      code: "INVALID_VALUE",
+      phase: "runtime",
+      path: "custom",
+    });
+
+    expect(() => evaluateExpression("custom()", {
+      scalars: {},
+      targetUnit: "px",
+      callFunction: () => {
+        throw callbackError;
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      phase: "runtime",
+      path: "custom",
+    }));
+  });
+
+  it("classifies collection boundary failures as runtime diagnostics", () => {
+    expect(toDiagnostic(new Error("INVALID_COLLECTION_ACCESS: first() called on empty collection"), {
+      phase: "resolve",
+    })).toMatchObject({
+      code: "INVALID_COLLECTION_ACCESS",
+      phase: "runtime",
+      message: "first() called on empty collection",
+    });
+  });
+
+  it("normalizes raw evaluator failures to actionable catalog codes", () => {
+    expect(toDiagnostic(new Error("Path \"open\" must be closed to expose area"))).toMatchObject({
+      code: "PATH_NOT_CLOSED",
+      phase: "resolve",
+    });
+    expect(toDiagnostic(new Error("Unknown object in pointAt: missing"), { phase: "resolve" })).toMatchObject({
+      code: "UNKNOWN_REFERENCE",
+      phase: "resolve",
+    });
+    expect(toDiagnostic(new Error("INVALID_T_PARAMETER: pointAt parameter t must be between 0 and 1"), { phase: "resolve" })).toMatchObject({
+      code: "INVALID_VALUE",
+      phase: "resolve",
+    });
+  });
+
+  it("preserves validation phase and path at the resolve boundary", () => {
+    expect(() => resolveGeometry({
+      version: "0.5",
+      objects: {
+        panel: { type: "rect" },
+      },
+    } as any)).toThrow(expect.objectContaining({
+      code: "MISSING_REQUIRED_FIELD",
+      phase: "validate",
+      path: "objects.panel",
     }));
   });
 

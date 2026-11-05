@@ -8,6 +8,38 @@ import { evaluateSingleDerived } from "../values";
 import { calculateBoundingBox } from "../geometry-utils";
 import { applyObjectPlacementAndTransform } from "./utils";
 import { resolveStructuredInherit } from "../inherit";
+import { sortNodes } from "../../graph";
+
+function componentParameterExpression(value: unknown): unknown {
+    if (value && typeof value === "object" && !Array.isArray(value) && "default" in (value as any)) {
+        return (value as any).default;
+    }
+    return value;
+}
+
+function evaluateComponentParameter(
+    value: unknown,
+    evalCtx: ReturnType<typeof createEvalContext>,
+    parameterType?: string,
+): unknown {
+    if (typeof value !== "string") return value;
+    if (parameterType === "string" || parameterType === "enum") return value;
+    try {
+        return evaluateExpression(value, evalCtx);
+    } catch (error) {
+        // Untyped shorthand parameters may be string literals. Typed numeric
+        // and geometric parameters must surface expression failures instead of
+        // deferring an invalid value to a later object resolution.
+        if (parameterType === undefined) return value;
+        throw error;
+    }
+}
+
+function getComponentParameterDependencies(value: unknown, parameterIds: Set<string>): string[] {
+    if (typeof value !== "string") return [];
+    const identifiers = value.match(/[a-zA-Z_][a-zA-Z0-9_]*/g) || [];
+    return [...new Set(identifiers.filter((identifier) => parameterIds.has(identifier)))];
+}
 
 export function resolveComponent(
     id: string,
@@ -24,18 +56,38 @@ export function resolveComponent(
     const evalCtx = createEvalContext(ctx);
     const localScalars: Record<string, any> = {};
 
-    // 1. Load default parameters from the component definition
+    // 1. Resolve component parameters in dependency order. A component
+    // parameter is scoped to the instance, so defaults such as
+    // `width: base * 2` must see `base` from the same component rather than
+    // accidentally resolving against document globals.
     if (compDef.parameters) {
-        for (const [pName, pDef] of Object.entries(compDef.parameters)) {
-            let defaultVal = pDef;
-            if (pDef && typeof pDef === "object" && !Array.isArray(pDef)) {
-                defaultVal = (pDef as any).default;
-            }
-            let evaluated = typeof defaultVal === "string" ? evaluateExpression(defaultVal, evalCtx) : defaultVal;
-            if (typeof evaluated === "string" && /[a-z%]+$/i.test(evaluated)) {
-                evaluated = evaluateExpression(evaluated, evalCtx);
-            }
-            localScalars[pName] = evaluated;
+        const parameterIds = Object.keys(compDef.parameters);
+        const effectiveValues = new Map<string, unknown>();
+        for (const pName of parameterIds) {
+            const definition = compDef.parameters[pName];
+            const defaultValue = componentParameterExpression(definition);
+            const suppliedValue = obj.params && Object.prototype.hasOwnProperty.call(obj.params, pName)
+                ? obj.params[pName]
+                : defaultValue;
+            effectiveValues.set(pName, suppliedValue);
+        }
+
+        const parameterOrder = sortNodes(parameterIds, (pName) => {
+            const value = effectiveValues.get(pName);
+            return getComponentParameterDependencies(value, new Set(parameterIds));
+        });
+
+        for (const pName of parameterOrder) {
+            const value = effectiveValues.get(pName);
+            const definition = compDef.parameters[pName];
+            const parameterType = definition && typeof definition === "object" && !Array.isArray(definition)
+                ? (definition as any).type
+                : undefined;
+            const parameterEvalCtx = createEvalContext({
+                ...ctx,
+                scalars: { ...ctx.scalars, ...localScalars },
+            });
+            localScalars[pName] = evaluateComponentParameter(value, parameterEvalCtx, parameterType);
         }
     }
 
@@ -46,19 +98,29 @@ export function resolveComponent(
             : {};
 
         for (const [pName, pVal] of Object.entries(inheritedParams)) {
-            let evaluated = typeof pVal === "string" ? evaluateExpression(pVal, evalCtx) : pVal;
-            if (typeof evaluated === "string" && /[a-z%]+$/i.test(evaluated)) {
-                evaluated = evaluateExpression(evaluated, evalCtx);
-            }
+            const definition = compDef.parameters?.[pName];
+            const parameterType = definition && typeof definition === "object" && !Array.isArray(definition)
+                ? (definition as any).type
+                : undefined;
+            const inheritedEvalCtx = createEvalContext({
+                ...ctx,
+                scalars: { ...ctx.scalars, ...localScalars },
+            });
+            const evaluated = evaluateComponentParameter(pVal, inheritedEvalCtx, parameterType);
             localScalars[pName] = evaluated;
         }
 
         for (const [pName, pVal] of Object.entries(obj.params)) {
             if (pName === "inherit") continue;
-            let evaluated = typeof pVal === "string" ? evaluateExpression(pVal, evalCtx) : pVal;
-            if (typeof evaluated === "string" && /[a-z%]+$/i.test(evaluated)) {
-                evaluated = evaluateExpression(evaluated, evalCtx);
-            }
+            const definition = compDef.parameters?.[pName];
+            const parameterType = definition && typeof definition === "object" && !Array.isArray(definition)
+                ? (definition as any).type
+                : undefined;
+            const localParamEvalCtx = createEvalContext({
+                ...ctx,
+                scalars: { ...ctx.scalars, ...localScalars },
+            });
+            const evaluated = evaluateComponentParameter(pVal, localParamEvalCtx, parameterType);
             localScalars[pName] = evaluated;
         }
     }

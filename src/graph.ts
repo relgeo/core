@@ -814,11 +814,21 @@ export function sortNodes(
 
     if (visiting.has(id)) {
       const cycleStartIdx = stack.indexOf(id);
-      const chain = [...stack.slice(cycleStartIdx), id];
+      const cycle = stack.slice(cycleStartIdx);
+      const canonicalStart = cycle.reduce(
+        (current, candidate) => candidate < current ? candidate : current,
+        cycle[0]
+      );
+      const canonicalIndex = cycle.indexOf(canonicalStart);
+      const canonicalCycle = [
+        ...cycle.slice(canonicalIndex),
+        ...cycle.slice(0, canonicalIndex),
+      ];
+      const chain = [...canonicalCycle, canonicalStart];
       throw new ResolveError(
         `Circular dependency detected: ${chain.join(" -> ")}`,
         "CIRCULAR_DEPENDENCY",
-        id,
+        canonicalStart,
         chain.join(" -> ")
       );
     }

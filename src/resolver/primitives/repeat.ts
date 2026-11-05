@@ -1,12 +1,22 @@
-import { RepeatObject, ResolvedObject } from "../../types";
+import { RepeatObject, ResolvedObject, type RelGeoErrorCode } from "../../types";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";
-import { ResolveContext } from "../types";
+import { ResolveContext, ResolveError } from "../types";
 import { resolveObject } from "../objects";
 import { resolveAnchorValue } from "../anchors";
 import { normalizeUnit } from "../../units";
 import { applyObjectPlacementAndTransform } from "./utils";
 import { getObjectBoundingBox } from "../geometry-utils";
+import { hasStructuredDiagnostic, stripErrorCodePrefix } from "../../errors";
+
+function throwRepeatError(
+    message: string,
+    code: RelGeoErrorCode,
+    id: string,
+    path: string,
+): never {
+    throw new ResolveError(message, code, id, path);
+}
 
 function isClosedPathLike(obj: any): boolean {
     return obj?.type === "circle"
@@ -29,6 +39,10 @@ function hasExplicitRepeatPosition(item: any): boolean {
         || item?.through !== undefined
         || item?.points !== undefined
         || item?.segments !== undefined;
+}
+
+function stableRepeatChildId(parentId: string, coordinates: number[]): string {
+    return `${parentId}[${coordinates.join(",")}]`;
 }
 
 function translateResolvedObject(obj: any, dx: number, dy: number) {
@@ -86,17 +100,33 @@ export function resolveRepeat(
         const targetId = String(along.target);
         const targetObj = ctx.objects[targetId];
         if (!targetObj) {
-            throw new Error(`INVALID_REPEAT_ALONG_TARGET: repeat.along target not found: ${targetId}`);
+            throwRepeatError(
+                `repeat.along target not found: ${targetId}`,
+                "INVALID_REPEAT_ALONG_TARGET",
+                id,
+                `objects.${id}.along.target`,
+            );
         }
 
         let totalLength: number;
         try {
             totalLength = Number(evaluateExpression(`length(${targetId})`, evalCtx));
         } catch (error: any) {
-            throw new Error(`INVALID_REPEAT_ALONG_TARGET: ${error.message}`);
+            if (hasStructuredDiagnostic(error)) throw error;
+            throwRepeatError(
+                stripErrorCodePrefix(error instanceof Error ? error.message : String(error)),
+                "INVALID_REPEAT_ALONG_TARGET",
+                id,
+                `objects.${id}.along.target`,
+            );
         }
         if (!Number.isFinite(totalLength) || totalLength <= 0) {
-            throw new Error(`INVALID_REPEAT_ALONG_TARGET: target "${targetId}" does not expose usable path length`);
+            throwRepeatError(
+                `target "${targetId}" does not expose usable path length`,
+                "INVALID_REPEAT_ALONG_TARGET",
+                id,
+                `objects.${id}.along.target`,
+            );
         }
 
         const startOffset = along.startOffset !== undefined
@@ -117,8 +147,19 @@ export function resolveRepeat(
             : 0;
 
         const usableLength = totalLength - startOffset - endOffset;
-        if (!Number.isFinite(startOffset) || !Number.isFinite(endOffset) || usableLength < 0) {
-            throw new Error(`INVALID_REPEAT_ALONG_SPACING: invalid repeat.along offsets for "${id}"`);
+        if (
+            !Number.isFinite(startOffset)
+            || !Number.isFinite(endOffset)
+            || startOffset < 0
+            || endOffset < 0
+            || usableLength < 0
+        ) {
+            throwRepeatError(
+                `repeat.along offsets must be finite and non-negative, with a non-negative usable length for "${id}"`,
+                "INVALID_REPEAT_ALONG_SPACING",
+                id,
+                `objects.${id}.along`,
+            );
         }
 
         const spacing = along.spacing;
@@ -133,7 +174,12 @@ export function resolveRepeat(
             }
             distanceStep = Number(normalizeUnit(distanceVal, ctx.targetUnit));
             if (!Number.isFinite(distanceStep) || distanceStep <= 0) {
-                throw new Error(`INVALID_FIXED_DISTANCE: repeat.along distance must be a positive length, got ${along.distance}`);
+                throwRepeatError(
+                    `repeat.along distance must be a positive length, got ${along.distance}`,
+                    "INVALID_FIXED_DISTANCE",
+                    id,
+                    `objects.${id}.along.distance`,
+                );
             }
             count = Math.floor(usableLength / distanceStep) + 1;
         } else {
@@ -143,7 +189,12 @@ export function resolveRepeat(
             }
             count = Number(countVal);
             if (!isPositiveInteger(count)) {
-                throw new Error(`INVALID_REPEAT_COUNT: repeat.along count must be a positive integer, got ${countVal}`);
+                throwRepeatError(
+                    `repeat.along count must be a positive integer, got ${countVal}`,
+                    "INVALID_REPEAT_COUNT",
+                    id,
+                    `objects.${id}.along.count`,
+                );
             }
         }
 
@@ -163,13 +214,21 @@ export function resolveRepeat(
                 }
                 t = Number(evaluateExpression(`tAtLength(${targetId}, ${distance})`, evalCtx));
             } else if (spacing === "uniform-t") {
-                t = count === 1 ? 0 : i / (count - 1);
+                // Closed paths must not duplicate their start point at t=1.
+                // This mirrors the uniform-length policy while preserving
+                // endpoint-inclusive traversal for open paths.
+                t = count === 1 ? 0 : isClosed ? i / count : i / (count - 1);
                 distance = startOffset + usableLength * t;
             } else if (spacing === "fixed-distance") {
                 distance = startOffset + i * distanceStep;
                 t = Number(evaluateExpression(`tAtLength(${targetId}, ${distance})`, evalCtx));
             } else {
-                throw new Error(`INVALID_REPEAT_ALONG_SPACING: unsupported repeat.along spacing "${spacing}"`);
+                throwRepeatError(
+                    `unsupported repeat.along spacing "${spacing}"`,
+                    "INVALID_REPEAT_ALONG_SPACING",
+                    id,
+                    `objects.${id}.along.spacing`,
+                );
             }
 
             const point = evaluateExpression(`pointAt(${targetId}, ${t})`, evalCtx);
@@ -191,7 +250,7 @@ export function resolveRepeat(
                 distance,
             };
 
-            const childId = `${id}[${i}]`;
+            const childId = stableRepeatChildId(id, [i]);
 
             ctx.scalars = {
                 ...originalScalars,
@@ -216,14 +275,24 @@ export function resolveRepeat(
         if (typeof rowsVal === "string") rowsVal = evaluateExpression(rowsVal, evalCtx);
         const rows = Number(rowsVal);
         if (!isPositiveInteger(rows)) {
-            throw new Error(`INVALID_REPEAT_COUNT: grid rows must be a positive integer, got ${rowsVal}`);
+            throwRepeatError(
+                `grid rows must be a positive integer, got ${rowsVal}`,
+                "INVALID_REPEAT_COUNT",
+                id,
+                `objects.${id}.grid.rows`,
+            );
         }
 
         let colsVal = obj.grid.cols;
         if (typeof colsVal === "string") colsVal = evaluateExpression(colsVal, evalCtx);
         const cols = Number(colsVal);
         if (!isPositiveInteger(cols)) {
-            throw new Error(`INVALID_REPEAT_COUNT: grid cols must be a positive integer, got ${colsVal}`);
+            throwRepeatError(
+                `grid cols must be a positive integer, got ${colsVal}`,
+                "INVALID_REPEAT_COUNT",
+                id,
+                `objects.${id}.grid.cols`,
+            );
         }
         
         let pitchX: number | undefined;
@@ -257,13 +326,34 @@ export function resolveRepeat(
             }
         }
 
+        if (pitchX !== undefined && pitchY !== undefined) {
+            if (![pitchX, pitchY].every(value => Number.isFinite(value) && value > 0)) {
+                throwRepeatError(
+                    `grid pitch must contain finite positive lengths, got ${obj.grid.pitch}`,
+                    "INVALID_GRID_SPACING",
+                    id,
+                    `objects.${id}.grid.pitch`,
+                );
+            }
+        }
+        if (gapX !== undefined && gapY !== undefined) {
+            if (![gapX, gapY].every(value => Number.isFinite(value) && value >= 0)) {
+                throwRepeatError(
+                    `grid gap must contain finite non-negative lengths, got ${obj.grid.gap}`,
+                    "INVALID_GRID_SPACING",
+                    id,
+                    `objects.${id}.grid.gap`,
+                );
+            }
+        }
+
         const gridItems: { r: number, c: number, id: string }[] = [];
         
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
                 const index = r * cols + c;
                 const count = rows * cols;
-                const childId = `${id}[${r},${c}]`;
+                const childId = stableRepeatChildId(id, [r, c]);
 
                 ctx.scalars = {
                     ...originalScalars,
@@ -314,12 +404,25 @@ export function resolveRepeat(
         if (typeof countVal === "string") countVal = evaluateExpression(countVal, evalCtx);
         const count = Number(countVal);
         if (!isPositiveInteger(count)) {
-            throw new Error(`INVALID_REPEAT_COUNT: polar count must be a positive integer, got ${countVal}`);
+            throwRepeatError(
+                `polar count must be a positive integer, got ${countVal}`,
+                "INVALID_REPEAT_COUNT",
+                id,
+                `objects.${id}.polar.count`,
+            );
         }
 
         let radVal = obj.polar.radius;
         if (typeof radVal === "string") radVal = evaluateExpression(radVal, evalCtx);
-        const radius = normalizeUnit(radVal, ctx.targetUnit);
+        const radius = Number(normalizeUnit(radVal, ctx.targetUnit));
+        if (!Number.isFinite(radius) || radius <= 0) {
+            throwRepeatError(
+                `polar radius must be a positive finite length, got ${radVal}`,
+                "INVALID_VALUE",
+                id,
+                `objects.${id}.polar.radius`,
+            );
+        }
         
         const centerPt = resolveAnchorValue(obj.polar.center, ctx);
         const cx = typeof centerPt === "number" ? centerPt : (centerPt?.x ?? 0);
@@ -335,7 +438,7 @@ export function resolveRepeat(
             };
             const itemContext = { x: pt.x, y: pt.y, position: pt, angle };
 
-            const childId = `${id}[${i}]`;
+            const childId = stableRepeatChildId(id, [i]);
 
             ctx.scalars = {
                 ...originalScalars,
@@ -384,7 +487,7 @@ export function resolveRepeat(
         for (let i = 0; i < count; i++) {
             const pt = pointsList[i];
             const itemContext = { x: pt.x, y: pt.y, position: pt, angle: 0 };
-            const childId = `${id}[${i}]`;
+            const childId = stableRepeatChildId(id, [i]);
 
             ctx.scalars = {
                 ...originalScalars,
@@ -409,13 +512,18 @@ export function resolveRepeat(
         if (typeof countVal === "string") countVal = evaluateExpression(countVal, evalCtx);
         const count = Number(countVal);
         if (!isPositiveInteger(count)) {
-            throw new Error(`INVALID_REPEAT_COUNT: repeat count must be a positive integer, got ${countVal}`);
+            throwRepeatError(
+                `repeat count must be a positive integer, got ${countVal}`,
+                "INVALID_REPEAT_COUNT",
+                id,
+                `objects.${id}.count`,
+            );
         }
 
         for (let i = 0; i < count; i++) {
             const pt = { x: 0, y: 0 };
             const itemContext = { x: pt.x, y: pt.y, position: pt, angle: 0 };
-            const childId = `${id}[${i}]`;
+            const childId = stableRepeatChildId(id, [i]);
 
             ctx.scalars = {
                 ...originalScalars,

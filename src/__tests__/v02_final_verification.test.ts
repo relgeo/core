@@ -60,6 +60,38 @@ objects:
         expect(child.y).toBe(5);
     });
 
+    it("should reject non-rect inside targets and negative margins", () => {
+        const nonRectTarget = `
+version: 0.2
+objects:
+  guide:
+    type: line
+    from: [0, 0]
+    to: [100, 0]
+  child:
+    type: rect
+    size: [20, 10]
+    place: { inside: guide }
+`;
+        expect(() => compileRelGeo(nonRectTarget)).toThrow(/place\.inside target "guide" must be a rect/);
+
+        const negativeMargin = `
+version: 0.2
+objects:
+  parent:
+    type: rect
+    size: [100, 50]
+    place: { left: 0, top: 0 }
+  child:
+    type: rect
+    size: [20, 10]
+    place:
+      inside: parent
+      margin: -1
+`;
+        expect(() => compileRelGeo(negativeMargin)).toThrow(/place\.inside margin must be a non-negative finite length/);
+    });
+
     it("should support scalar align.offset with intuitive sign (target = with + offset)", () => {
         const yaml = `
 version: 0.2

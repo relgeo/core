@@ -62,14 +62,43 @@ function resolveOperationOrigin(
         y: bbox.y + bbox.height / 2,
     };
 
+    let origin;
     if ("origin" in obj && obj.origin !== undefined) {
         const resolved = resolveAnchorValue(obj.origin, ctx);
-        return typeof resolved === "number"
+        origin = typeof resolved === "number"
             ? { x: resolved, y: resolved }
             : resolved;
+    } else {
+        origin = defaultOrigin;
     }
 
-    return defaultOrigin;
+    if (!Number.isFinite(origin.x) || !Number.isFinite(origin.y)) {
+        throw new ResolveError(
+            "Operation origin must resolve to finite coordinates",
+            "INVALID_VALUE",
+            undefined,
+            "origin"
+        );
+    }
+    return origin;
+}
+
+function assertFiniteOperationTransform(transform: any, id: string): void {
+    const values = transform.type === "translate"
+        ? [transform.x, transform.y]
+        : transform.type === "rotate"
+            ? [transform.angle, transform.origin?.x, transform.origin?.y]
+            : transform.type === "scale"
+                ? [...transform.factor, transform.origin?.x, transform.origin?.y]
+                : [transform.origin?.x, transform.origin?.y];
+    if (values.some(value => !Number.isFinite(value))) {
+        throw new ResolveError(
+            `Operation "${id}" contains non-finite transform values`,
+            "INVALID_VALUE",
+            id,
+            "transform"
+        );
+    }
 }
 
 export function resolveGeometryOperationObject(
@@ -139,6 +168,10 @@ export function resolveGeometryOperationObject(
             axis: obj.axis,
             origin: resolveOperationOrigin(obj, bbox, ctx),
         };
+    }
+
+    if (transform) {
+        assertFiniteOperationTransform(transform, id);
     }
 
     const resolved: ResolvedObject = {
@@ -294,6 +327,23 @@ function toSplittableTarget(targetId: string, source: any, ctx: ResolveContext):
 function toSplittableSegments(targetId: string, source: any, ctx: ResolveContext): PathResolvedSegment[] {
     if (!source) {
         throw new ResolveError(`Unknown split target "${targetId}"`, "INVALID_SPLIT_TARGET", targetId);
+    }
+
+    // Lower operation chains from the innermost path outward so a split can
+    // target a transformed operation whose target is itself transformed.
+    if (source.type === "reverse") {
+        const target = ctx.objects[source.target];
+        return toSplittableSegments(source.target, target, ctx)
+            .slice()
+            .reverse()
+            .map(reverseResolvedSegment);
+    }
+    if (source.type === "translate" || source.type === "rotate" || source.type === "scale" || source.type === "mirror") {
+        const target = ctx.objects[source.target];
+        const targetSegments = toSplittableSegments(source.target, target, ctx);
+        return source.transform && source.transform.length > 0
+            ? applyOperationTransformToSegments(targetSegments, source.transform[0], targetId)
+            : targetSegments;
     }
 
     if (source.type === "line") {

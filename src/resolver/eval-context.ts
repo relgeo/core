@@ -1,6 +1,7 @@
 import type { EvalContext, TypedValue } from "../evaluator";
 import type { ResolveContext } from "./types";
 import { getAnchorValue } from "./anchors";
+import { CoreError } from "../errors";
 
 export function wrapTypedValue(val: any): TypedValue {
     if (val && typeof val === "object" && "type" in val && "value" in val) {
@@ -28,6 +29,13 @@ export function wrapTypedValue(val: any): TypedValue {
  * Creates a standard EvalContext with dynamic identifier resolution.
  */
 export function createEvalContext(ctx: ResolveContext): EvalContext {
+    const objectPath = ctx.currentObjectId ? `objects.${ctx.currentObjectId}` : undefined;
+    const collectionError = (message: string): CoreError => new CoreError(
+        message,
+        "INVALID_COLLECTION_ACCESS",
+        { phase: "runtime", objectId: ctx.currentObjectId, path: objectPath },
+    );
+
     return {
         scalars: ctx.scalars,
         targetUnit: ctx.targetUnit,
@@ -64,7 +72,15 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                         return wrapTypedValue(val.anchors[member]);
                     }
                     if (val.hasExports) {
-                        throw new Error(`COMPONENT_EXPORT_NOT_FOUND: Component does not export anchor '${member}'`);
+                        throw new CoreError(
+                            `Component does not export anchor '${member}'`,
+                            "COMPONENT_EXPORT_NOT_FOUND",
+                            {
+                                phase: "resolve",
+                                objectId: ctx.currentObjectId,
+                                path: `${objectPath ?? `objects.${val.id}`}.${member}`,
+                            },
+                        );
                     }
                     if (val.children && val.children.includes(`${val.id}.${member}`)) {
                         const childId = `${val.id}.${member}`;
@@ -96,18 +112,18 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                     const childId = `${val.id}[${index[0]},${index[1]}]`;
                     const childObj = ctx.objects[childId];
                     if (!childObj) {
-                        throw new Error(`INVALID_COLLECTION_ACCESS: Grid index [${index[0]}, ${index[1]}] out of bounds on collection ${val.id}`);
+                        throw collectionError(`Grid index [${index[0]}, ${index[1]}] out of bounds on collection ${val.id}`);
                     }
                     return wrapTypedValue(childObj);
                 } else {
                     if (Array.isArray(val.children)) {
                         const childId = val.children[index];
                         if (childId === undefined) {
-                            throw new Error(`INVALID_COLLECTION_ACCESS: Index ${index} out of bounds on collection ${val.id}`);
+                            throw collectionError(`Index ${index} out of bounds on collection ${val.id}`);
                         }
                         const childObj = ctx.objects[childId];
                         if (!childObj) {
-                            throw new Error(`INVALID_COLLECTION_ACCESS: Resolved object ${childId} not found`);
+                            throw collectionError(`Resolved object ${childId} not found`);
                         }
                         return wrapTypedValue(childObj);
                     }
@@ -148,7 +164,7 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                 if (!arg) throw new Error("first() requires exactly one argument");
                 if (arg.type === "array" && Array.isArray(arg.value)) {
                     if (arg.value.length === 0) {
-                        throw new Error("INVALID_COLLECTION_ACCESS: first() called on empty array");
+                        throw collectionError("first() called on empty array");
                     }
                     return wrapTypedValue(arg.value[0]);
                 }
@@ -156,19 +172,19 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                 if (arg.type === "object" && val && val.type === "collection") {
                     if (Array.isArray(val.children)) {
                         if (val.children.length === 0) {
-                            throw new Error("INVALID_COLLECTION_ACCESS: first() called on empty collection");
+                            throw collectionError("first() called on empty collection");
                         }
                         const childId = val.children[0];
                         const childObj = ctx.objects[childId];
                         if (!childObj) {
-                            throw new Error(`INVALID_COLLECTION_ACCESS: Resolved object ${childId} not found`);
+                            throw collectionError(`Resolved object ${childId} not found`);
                         }
                         return wrapTypedValue(childObj);
                     }
                 }
                 if (Array.isArray(val)) {
                     if (val.length === 0) {
-                        throw new Error("INVALID_COLLECTION_ACCESS: first() called on empty list");
+                        throw collectionError("first() called on empty list");
                     }
                     return wrapTypedValue(val[0]);
                 }
@@ -180,7 +196,7 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                 if (!arg) throw new Error("last() requires exactly one argument");
                 if (arg.type === "array" && Array.isArray(arg.value)) {
                     if (arg.value.length === 0) {
-                        throw new Error("INVALID_COLLECTION_ACCESS: last() called on empty array");
+                        throw collectionError("last() called on empty array");
                     }
                     return wrapTypedValue(arg.value[arg.value.length - 1]);
                 }
@@ -188,19 +204,19 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                 if (arg.type === "object" && val && val.type === "collection") {
                     if (Array.isArray(val.children)) {
                         if (val.children.length === 0) {
-                            throw new Error("INVALID_COLLECTION_ACCESS: last() called on empty collection");
+                            throw collectionError("last() called on empty collection");
                         }
                         const childId = val.children[val.children.length - 1];
                         const childObj = ctx.objects[childId];
                         if (!childObj) {
-                            throw new Error(`INVALID_COLLECTION_ACCESS: Resolved object ${childId} not found`);
+                            throw collectionError(`Resolved object ${childId} not found`);
                         }
                         return wrapTypedValue(childObj);
                     }
                 }
                 if (Array.isArray(val)) {
                     if (val.length === 0) {
-                        throw new Error("INVALID_COLLECTION_ACCESS: last() called on empty list");
+                        throw collectionError("last() called on empty list");
                     }
                     return wrapTypedValue(val[val.length - 1]);
                 }

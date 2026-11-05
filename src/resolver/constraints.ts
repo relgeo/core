@@ -18,6 +18,26 @@ import { normalizeUnit } from "../units";
 import { intersectLineCircle, intersectLineArc } from "./intersection";
 
 const EPSILON = 0.001;
+type PendingConstraintViolation = Omit<ConstraintViolation, 'severity' | 'origin' | 'expected' | 'actual'>;
+
+function lineLength(line: ResolvedLine): number {
+    return Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
+}
+
+function degenerateRelationViolation(
+    type: 'parallel' | 'perpendicular' | 'tangent',
+    message: string,
+    path: string,
+    involvedObjects: string[]
+): PendingConstraintViolation {
+    return {
+        type,
+        message,
+        deviation: 1,
+        path,
+        involvedObjects
+    };
+}
 
 export class ConstraintError extends Error implements RelGeoError {
     public code: RelGeoErrorCode;
@@ -42,7 +62,7 @@ export class ConstraintError extends Error implements RelGeoError {
 
 export function processConstraints(constraints: ConstraintObject[], ctx: ResolveContext): ConstraintViolation[] {
     const evalCtx = createEvalContext(ctx);
-    const violations: ConstraintViolation[] = [];
+    const violations: PendingConstraintViolation[] = [];
 
     for (let i = 0; i < constraints.length; i++) {
         const c = constraints[i];
@@ -115,6 +135,17 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
             const l2 = ctx.objects[id2] as ResolvedLine;
             
             if (l1 && l2 && l1.type === "line" && l2.type === "line") {
+                const length1 = lineLength(l1);
+                const length2 = lineLength(l2);
+                if (!Number.isFinite(length1) || !Number.isFinite(length2) || length1 <= EPSILON || length2 <= EPSILON) {
+                    violations.push(degenerateRelationViolation(
+                        'parallel',
+                        `Lines ${id1} and ${id2} must both have non-zero length to establish parallelism.`,
+                        path,
+                        [id1, id2]
+                    ));
+                    continue;
+                }
                 const angle1 = Math.atan2(l1.y2 - l1.y1, l1.x2 - l1.x1);
                 const angle2 = Math.atan2(l2.y2 - l2.y1, l2.x2 - l2.x1);
                 const rawDiff = Math.abs((angle1 - angle2) % Math.PI);
@@ -136,6 +167,17 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
             const l2 = ctx.objects[id2] as ResolvedLine;
             
             if (l1 && l2 && l1.type === "line" && l2.type === "line") {
+                const length1 = lineLength(l1);
+                const length2 = lineLength(l2);
+                if (!Number.isFinite(length1) || !Number.isFinite(length2) || length1 <= EPSILON || length2 <= EPSILON) {
+                    violations.push(degenerateRelationViolation(
+                        'perpendicular',
+                        `Lines ${id1} and ${id2} must both have non-zero length to establish perpendicularity.`,
+                        path,
+                        [id1, id2]
+                    ));
+                    continue;
+                }
                 const angle1 = Math.atan2(l1.y2 - l1.y1, l1.x2 - l1.x1);
                 const angle2 = Math.atan2(l2.y2 - l2.y1, l2.x2 - l2.x1);
                 const rawDiff = Math.abs((angle1 - angle2) % Math.PI);
@@ -165,6 +207,17 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
                     : null;
 
             if (line && target) {
+                const lineMagnitude = lineLength(line);
+                const targetRadius = target.type === "circle" || target.type === "arc" ? target.radius : 0;
+                if (!Number.isFinite(lineMagnitude) || lineMagnitude <= EPSILON || !Number.isFinite(targetRadius) || targetRadius <= EPSILON) {
+                    violations.push(degenerateRelationViolation(
+                        'tangent',
+                        `Objects ${ref1} and ${ref2} must have non-degenerate geometry to establish tangency.`,
+                        path,
+                        [ref1, ref2]
+                    ));
+                    continue;
+                }
                 const intersections =
                     target.type === "circle"
                         ? intersectLineCircle(line, target as ResolvedCircle)
@@ -183,5 +236,11 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
         }
     }
 
-    return violations;
+    return violations.map((violation) => ({
+        ...violation,
+        severity: 'error' as const,
+        origin: 'constraint' as const,
+        expected: { deviation: 0, tolerance: EPSILON },
+        actual: { deviation: violation.deviation },
+    }));
 }

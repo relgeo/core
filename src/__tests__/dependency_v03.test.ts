@@ -47,4 +47,18 @@ describe("Dependency Ordering v0.3", () => {
     expect(sorted.indexOf("H1")).toBeLessThan(sorted.indexOf("p1"));
     expect(sorted.indexOf("H2")).toBeLessThan(sorted.indexOf("p1"));
   });
+
+  it("should canonicalize cycle diagnostics independent of declaration order", () => {
+    const firstOrder: any = {
+      A: { type: "point", at: "B" },
+      B: { type: "point", at: "A" },
+    };
+    const secondOrder: any = {
+      B: { type: "point", at: "A" },
+      A: { type: "point", at: "B" },
+    };
+
+    expect(() => sortObjects(firstOrder)).toThrow("Circular dependency detected: A -> B -> A");
+    expect(() => sortObjects(secondOrder)).toThrow("Circular dependency detected: A -> B -> A");
+  });
 });

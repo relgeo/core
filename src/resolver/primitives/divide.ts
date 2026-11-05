@@ -1,7 +1,7 @@
 import { DivideObject, ResolvedObject } from "../../types";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";
-import { ResolveContext } from "../types";
+import { ResolveContext, ResolveError } from "../types";
 
 export function resolveDivide(
     id: string,
@@ -14,16 +14,26 @@ export function resolveDivide(
     if (typeof countVal === "string") {
         countVal = evaluateExpression(countVal, evalCtx);
     }
-    const count = Math.round(Number(countVal));
+    const count = Number(countVal);
     
-    if (isNaN(count) || count < 1) {
-        throw new Error(`Invalid count in divide object: ${obj.count}`);
+    if (!Number.isFinite(count) || !Number.isInteger(count) || count < 1) {
+        throw new ResolveError(
+            `Invalid count in divide object: ${obj.count}`,
+            "INVALID_VALUE",
+            id,
+            `objects.${id}.count`,
+        );
     }
 
     const targetId = obj.target;
     const targetObj = ctx.objects[targetId];
     if (!targetObj) {
-        throw new Error(`Target object not found for divide: ${targetId}`);
+        throw new ResolveError(
+            `Target object not found for divide: ${targetId}`,
+            "UNKNOWN_REFERENCE",
+            id,
+            `objects.${id}.target`,
+        );
     }
 
     // Determine if the target object is a closed path/shape

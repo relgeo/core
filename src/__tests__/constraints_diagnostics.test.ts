@@ -20,6 +20,12 @@ describe('Constraint Diagnostics', () => {
         expect(result.violations?.length).toBe(1);
         expect(result.violations?.[0].type).toBe('align');
         expect(result.violations?.[0].deviation).toBeGreaterThan(0);
+        expect(result.violations?.[0]).toMatchObject({
+            severity: 'error',
+            origin: 'constraint',
+            expected: { deviation: 0, tolerance: 0.001 },
+            actual: { deviation: expect.any(Number) },
+        });
     });
 
     it('should report parallel violation for non-parallel lines', () => {
@@ -56,5 +62,32 @@ describe('Constraint Diagnostics', () => {
         expect(result.violations?.length).toBe(1);
         expect(result.violations?.[0].type).toBe('equal');
         expect(result.violations?.[0].deviation).toBeGreaterThan(0);
+    });
+
+    it('should report relation violations for degenerate geometry', () => {
+        const doc: RelGeoDocument = {
+            version: '1.0',
+            objects: {
+                flat: { type: 'line', from: [0, 0], to: [0, 0] },
+                guide: { type: 'line', from: [0, 20], to: [100, 20] },
+                circle: { type: 'circle', center: [50, 50], radius: 0 }
+            },
+            constraints: [
+                { parallel: ['flat', 'guide'] },
+                { tangent: ['flat', 'circle'] }
+            ]
+        };
+
+        const result = resolveGeometry(doc);
+        expect(result.violations).toHaveLength(2);
+        expect(result.violations?.map(violation => violation.type)).toEqual(['parallel', 'tangent']);
+        expect(result.violations?.map(violation => violation.path)).toEqual(['constraints[0]', 'constraints[1]']);
+        expect(result.violations?.every(violation => violation.deviation > 0)).toBe(true);
+        expect(result.violations?.every(violation =>
+            violation.severity === 'error'
+            && violation.origin === 'constraint'
+            && typeof violation.expected === 'object'
+            && typeof violation.actual === 'object',
+        )).toBe(true);
     });
 });

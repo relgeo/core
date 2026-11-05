@@ -86,6 +86,49 @@ describe("resolver values", () => {
     expect(values.size).toBe(50);
   });
 
+  it("should reject an unknown profile at the core resolver boundary", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      parameters: {
+        size: { type: "length", default: "10px" },
+      },
+      profiles: {
+        large: { size: "50px" },
+      },
+      objects: {},
+    };
+
+    expect(() => resolveValues(doc, { profile: "missing" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_REFERENCE",
+      path: "profile",
+    }));
+  });
+
+  it("should apply profile units before evaluating derived geometry", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "cm" },
+      parameters: {
+        width: { type: "length", default: "10mm" },
+      },
+      profiles: {
+        large: { width: "20mm" },
+      },
+      derived: {
+        doubleWidth: { value: "width * 2" },
+      },
+      objects: {
+        panel: { type: "rect", size: ["doubleWidth", "1cm"] },
+      },
+    };
+
+    const resolved = resolveGeometry(doc, { profile: "large", targetUnit: "cm" });
+    expect(resolved.values.width).toBeCloseTo(2, 8);
+    expect(resolved.values.doubleWidth).toBeCloseTo(4, 8);
+    expect((resolved.objects.panel as ResolvedRect).width).toBeCloseTo(4, 8);
+    expect((resolved.objects.panel as ResolvedRect).height).toBeCloseTo(1, 8);
+  });
+
   it("should resolve derived values with dependencies", () => {
     const doc: RelGeoDocument = {
       version: 0.1,
@@ -521,6 +564,26 @@ describe("resolver values", () => {
     };
 
     expect(() => resolveGeometry(doc)).toThrow("INVALID_REVERSE_TARGET");
+  });
+
+  it("should reject non-finite transform values", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        base: {
+          type: "line",
+          from: [0, 0],
+          to: [10, 0],
+        },
+        moved: {
+          type: "translate",
+          target: "base",
+          by: [Number.POSITIVE_INFINITY, 0],
+        } as any,
+      },
+    };
+
+    expect(() => resolveGeometry(doc)).toThrow(/Operation "moved" contains non-finite transform values/);
   });
 
   it("should resolve path join even when targets are declared later", () => {

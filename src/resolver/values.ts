@@ -6,10 +6,11 @@ import { sortNodes } from "../graph";
 import { getExpressionDependencies } from "./expression-deps";
 import type { ResolveOptions } from "./types";
 import { ResolveError } from "./types";
-import { normalizeErrorCode, stripErrorCodePrefix } from "../errors";
+import { hasStructuredDiagnostic, normalizeErrorCode, stripErrorCodePrefix } from "../errors";
 
 function wrapError(e: any, id: string, path: string): never {
     if (e instanceof ResolveError) throw e;
+    if (hasStructuredDiagnostic(e)) throw e;
     const rawMessage = e instanceof Error ? e.message : String(e);
     const code = normalizeErrorCode(e?.code, rawMessage, "RESOLVE_ERROR");
     throw new ResolveError(stripErrorCodePrefix(rawMessage), code, id, path);
@@ -59,6 +60,15 @@ export function resolveValues(
 ): Record<string, any> {
     const targetUnit = options.targetUnit || doc.scene?.unit || "px";
     const scalars: Record<string, any> = {};
+
+    if (options.profile !== undefined && !Object.prototype.hasOwnProperty.call(doc.profiles || {}, options.profile)) {
+        throw new ResolveError(
+            `Unknown profile "${options.profile}"`,
+            "UNKNOWN_REFERENCE",
+            undefined,
+            "profile",
+        );
+    }
 
     // 1. Resolve Parameters
     if (doc.parameters) {

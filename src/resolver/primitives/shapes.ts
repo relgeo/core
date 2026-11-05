@@ -973,7 +973,11 @@ export function resolveText(id: string, obj: TextObject, ctx: ResolveContext): R
 
     const width = metrics.width;
     const height = metrics.height;
-    const anchor = obj.anchor ?? "topLeft";
+    // RelGeo 0.5 freezes text's implicit anchor as the bounding-box center.
+    // Keep the legacy top-left default for pre-0.5 documents so older scenes
+    // retain their established placement semantics.
+    const documentVersion = Number(ctx.doc?.version ?? 0);
+    const anchor = obj.anchor ?? (documentVersion >= 0.5 ? "center" : "topLeft");
 
     try {
         if (obj.at) {
@@ -1874,12 +1878,14 @@ function translateSegment(s: PathResolvedSegment, dx: number, dy: number): PathR
 export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveContext): ResolvedBoolean {
     const engine = new ClipperBooleanEngine();
     let polyResults: PolyWithHoles[] = [];
+    const path = `objects.${id}`;
 
     if (obj.operation !== "subtract" && obj.operation !== "union" && obj.operation !== "intersect" && obj.operation !== "xor") {
         throw new ResolveError(
             `Unknown or missing boolean operation: "${obj.operation}"`,
             "INVALID_BOOLEAN_OPERATION",
-            id
+            id,
+            path,
         );
     }
 
@@ -1890,14 +1896,16 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
                 throw new ResolveError(
                     `Subtract operation is missing required "base" property`,
                     "INVALID_BOOLEAN_OPERATION",
-                    id
+                    id,
+                    path,
                 );
             }
             if (!raw.tools || raw.tools.length === 0) {
                 throw new ResolveError(
                     `Subtract operation is missing required "tools" property`,
                     "INVALID_BOOLEAN_OPERATION",
-                    id
+                    id,
+                    path,
                 );
             }
             const baseObj = ctx.objects[raw.base];
@@ -1917,7 +1925,8 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
                 throw new ResolveError(
                     `Boolean operation "${obj.operation}" requires "shapes" property`,
                     "INVALID_BOOLEAN_OPERATION",
-                    id
+                    id,
+                    path,
                 );
             }
             const operandObjs = (raw.shapes || []).map((sId: string) => {
@@ -1937,7 +1946,7 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
     } catch (e: any) {
         if (ctx.mode !== "editor") {
             if (e instanceof ResolveError) throw e;
-            throw new ResolveError(e.message, "BOOLEAN_FAILED", id);
+            throw new ResolveError(e.message, "BOOLEAN_FAILED", id, path);
         }
     }
 
@@ -1945,7 +1954,8 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
         throw new ResolveError(
             `Boolean operation "${obj.operation}" produced an empty result`,
             "BOOLEAN_EMPTY_RESULT",
-            id
+            id,
+            path,
         );
     }
 
@@ -1955,7 +1965,8 @@ export function resolveBoolean(id: string, obj: BooleanObject, ctx: ResolveConte
         throw new ResolveError(
             `Boolean operation produced multipart result (islands) but result.mode was set to "single"`,
             "BOOLEAN_MULTIPART_RESULT",
-            id
+            id,
+            path
         );
     }
 

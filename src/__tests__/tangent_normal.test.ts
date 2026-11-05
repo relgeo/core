@@ -69,6 +69,26 @@ const geoCtx: EvalContext = {
 };
 
 describe("tangentAt()", () => {
+  it("rejects non-finite and out-of-range path parameters", () => {
+    const nonFiniteCtx: EvalContext = { ...geoCtx, scalars: { t: Infinity } };
+    expect(() => evaluateExpression("pointAt(hLine, -0.1)", geoCtx)).toThrow(/parameter t must be between 0 and 1/);
+    expect(() => evaluateExpression("tangentAt(hLine, 1.1)", geoCtx)).toThrow(/parameter t must be between 0 and 1/);
+    expect(() => evaluateExpression("normalAt(hLine, t)", nonFiniteCtx)).toThrow(/parameter t must be between 0 and 1/);
+  });
+
+  it("rejects tangent queries on a degenerate path", () => {
+    const degenerateCtx: EvalContext = {
+      ...geoCtx,
+      objects: {
+        ...geoCtx.objects,
+        degenerate: { id: "degenerate", type: "line", x1: 4, y1: 4, x2: 4, y2: 4 } as any,
+      },
+    };
+
+    expect(() => evaluateExpression("tangentAt(degenerate, 0.5)", degenerateCtx)).toThrow(/TANGENT_NOT_FOUND/);
+    expect(() => evaluateExpression("normalAt(degenerate, 0.5)", degenerateCtx)).toThrow(/TANGENT_NOT_FOUND/);
+  });
+
   it("horizontal line → tangent is (1,0)", () => {
     const t = evaluateExpression("tangentAt(hLine, 0.5)", geoCtx);
     expect(t.x).toBeCloseTo(1);

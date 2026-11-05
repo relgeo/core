@@ -31,6 +31,7 @@ const PATH_LIKE_OBJECT_TYPES = new Set(["line", "arc", "circle", "ellipse", "rec
 const SCENE_UNITS = new Set(["mm", "cm", "m", "in", "px"]);
 const SCENE_ORIENTATIONS = new Set(["y-down", "y-up"]);
 const SCENE_ORIGINS = new Set(["top-left", "bottom-left", "center"]);
+const LENGTH_LITERAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:px|mm|cm|m|in)?$/;
 
 const POINT_RETURNING_ANCHORS: Record<string, Set<string>> = {
   point: new Set(["center"]),
@@ -143,6 +144,7 @@ export class Validator {
   private validateInternal(): void {
     this.validateIdentifiers();
     this.validateParameters();
+    this.validateProfiles();
     this.validateExpressions();
     this.validateConstraints();
     this.validateScene();
@@ -364,7 +366,7 @@ export class Validator {
   }
 
   private validateExpressions(): void {
-    const validateExpr = (expr: any, path: string) => {
+    const validateExpr = (expr: any, path: string, scopedIdentifiers: Set<string> = new Set()) => {
       if (typeof expr !== "string") return;
 
       try {
@@ -410,6 +412,7 @@ export class Validator {
           }),
           resolveIdentifier: (name: string) => {
             if (this.isValidObjectReference(name)) return 1;
+            if (scopedIdentifiers.has(name)) return 1;
             
             // Allow unknown identifiers without throwing IF it's an anchor field 
             // e.g. path ends with .anchor or .origin or path includes .place.
@@ -429,6 +432,9 @@ export class Validator {
           get: (name: string) => {
             if (this.objectIds.has(name)) {
               return { type: "object" as const, value: { type: this.doc.objects![name].type, id: name } };
+            }
+            if (scopedIdentifiers.has(name)) {
+              return { type: "number" as const, value: 1 };
             }
             if (this.isValidObjectReference(name)) {
               return { type: "number" as const, value: 1 };
@@ -953,8 +959,13 @@ export class Validator {
           }
         }
         if (obj.params) {
+          const componentDefinition = this.doc.components?.[obj.use];
+          const componentScopedIds = new Set([
+            ...Object.keys(componentDefinition?.parameters || {}),
+            ...Object.keys(componentDefinition?.derived || {}),
+          ]);
           for (const [paramName, paramVal] of Object.entries(obj.params)) {
-            validateExpr(paramVal, `${path}.params.${paramName}`);
+            validateExpr(paramVal, `${path}.params.${paramName}`, componentScopedIds);
           }
         }
         if (obj.place) this.validatePlace(obj.place, path, validateExpr);
@@ -1747,6 +1758,35 @@ export class Validator {
     }
   }
 
+  private validateProfiles(): void {
+    if (!this.doc.profiles) return;
+
+    for (const [profileId, overrides] of Object.entries(this.doc.profiles)) {
+      const profilePath = `profiles.${profileId}`;
+      if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+        throw new ValidationError("Profile overrides must be an object", profilePath, "TYPE_MISMATCH");
+      }
+
+      for (const [parameterId, value] of Object.entries(overrides)) {
+        const parameter = this.doc.parameters?.[parameterId] as any;
+        const valuePath = `${profilePath}.${parameterId}`;
+        if (parameter === undefined) {
+          throw new ValidationError(
+            `Profile "${profileId}" may override parameters only; "${parameterId}" is not declared`,
+            valuePath,
+            "UNKNOWN_FIELD",
+          );
+        }
+
+        // Parser-normalized shorthand parameters do not need special handling here.
+        // Typed declarations reuse the same value contract as their defaults.
+        if (parameter && typeof parameter === "object" && !Array.isArray(parameter) && "type" in parameter) {
+          this.validateValueType(value, parameter.type, valuePath);
+        }
+      }
+    }
+  }
+
   private validateValueType(val: any, type: string, path: string): void {
     if (val === null || val === undefined) return;
 
@@ -1767,7 +1807,7 @@ export class Validator {
       case "length":
         if (typeof val !== "number") {
           const str = String(val);
-          const hasUnit = /^[+-]?([\d.]+)(px|mm|cm|m)?$/.test(str);
+          const hasUnit = LENGTH_LITERAL.test(str);
           if (!hasUnit) {
             throw new ValidationError(`Value must be a valid length (e.g. 10px, 20mm), got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
           }
@@ -1799,7 +1839,7 @@ export class Validator {
         val.forEach((coord, i) => {
           if (typeof coord !== "number") {
             const str = String(coord);
-            const hasUnit = /^[+-]?([\d.]+)(px|mm|cm|m)?$/.test(str);
+            const hasUnit = LENGTH_LITERAL.test(str);
             if (!hasUnit) {
               throw new ValidationError(`Coordinate at index ${i} must be a valid length, got: ${JSON.stringify(coord)}`, `${path}[${i}]`, "TYPE_MISMATCH");
             }

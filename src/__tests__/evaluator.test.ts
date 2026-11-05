@@ -173,6 +173,34 @@ describe("evaluator", () => {
     expect(evaluateExpression("area(path1)", geoCtx)).toBe(800);
   });
 
+  it("should include closed-shape holes in area() and perimeter() queries", () => {
+    const geoCtx: EvalContext = {
+      scalars: {},
+      targetUnit: "px",
+      objects: {
+        panel: {
+          id: "panel",
+          type: "rect",
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          holes: [{
+            segments: [
+              { type: "line", x1: 40, y1: 40, x2: 60, y2: 40 },
+              { type: "line", x1: 60, y1: 40, x2: 60, y2: 60 },
+              { type: "line", x1: 60, y1: 60, x2: 40, y2: 60 },
+              { type: "line", x1: 40, y1: 60, x2: 40, y2: 40 },
+            ],
+          }],
+        } as any,
+      },
+    };
+
+    expect(evaluateExpression("area(panel)", geoCtx)).toBe(9600);
+    expect(evaluateExpression("perimeter(panel)", geoCtx)).toBe(480);
+  });
+
   it("should reject area() on open path", () => {
     const geoCtx: EvalContext = {
       scalars: {},

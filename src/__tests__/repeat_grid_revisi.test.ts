@@ -49,6 +49,32 @@ objects:
         }).toThrow(/item placement is not allowed when grid auto-layout is active/);
     });
 
+    it("should reject negative pitch and non-finite gap at resolve time", () => {
+        const negativePitch = {
+            version: 0.5,
+            objects: {
+                grid_obj: {
+                    type: "repeat",
+                    grid: { rows: 1, cols: 2, pitch: -10 },
+                    item: { type: "rect", size: [5, 5] },
+                },
+            },
+        } as any;
+        expect(() => resolveGeometry(negativePitch, { mode: "editor" })).toThrow(/grid pitch must contain finite positive lengths/);
+
+        const nonFiniteGap = {
+            version: 0.5,
+            objects: {
+                grid_obj: {
+                    type: "repeat",
+                    grid: { rows: 1, cols: 2, gap: Number.POSITIVE_INFINITY },
+                    item: { type: "rect", size: [5, 5] },
+                },
+            },
+        } as any;
+        expect(() => resolveGeometry(nonFiniteGap, { mode: "editor" })).toThrow(/grid gap must contain finite non-negative lengths/);
+    });
+
     it("should handle Manual Layout (no pitch, no gap) without modifying coordinates", () => {
         const yaml = `
 version: 0.1

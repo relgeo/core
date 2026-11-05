@@ -13,7 +13,7 @@ import { Validator } from "../validator";
 import { parseRelGeo } from "../parser";
 import { evaluateExpression } from "../evaluator";
 import { createEvalContext } from "./eval-context";
-import { normalizeResolveError } from "../errors";
+import { hasStructuredDiagnostic, normalizeResolveError } from "../errors";
 
 export type { ResolveOptions, ResolveContext } from "./types";
 export { ResolveError } from "./types";
@@ -40,6 +40,12 @@ export function resolveGeometry(
     try {
         return resolveGeometryInternal(doc, options);
     } catch (error) {
+        // Validation and other structured boundary errors already carry their
+        // normative phase/code/path payload. Re-wrapping them as ResolveError
+        // would misclassify validate diagnostics as resolve diagnostics.
+        if (hasStructuredDiagnostic(error)) {
+            throw error;
+        }
         throw normalizeResolveError(error);
     }
 }
@@ -118,6 +124,7 @@ function resolveGeometryInternal(
                         currentObjectId: node.id
                     });
                 } catch (error) {
+                    if (hasStructuredDiagnostic(error)) throw error;
                     throw normalizeResolveError(error, node.id, `objects.${node.id}`);
                 }
                 if (resolved !== undefined) {
@@ -144,6 +151,7 @@ function resolveGeometryInternal(
                     currentObjectId: id
                 });
             } catch (error) {
+                if (hasStructuredDiagnostic(error)) throw error;
                 throw normalizeResolveError(error, id, `objects.${id}`);
             }
             if (resolved !== undefined) {

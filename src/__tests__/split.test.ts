@@ -103,4 +103,29 @@ objects:
       } as any)
     ).toThrow("DEGENERATE_SPLIT");
   });
+
+  it("splits a path after a chained transform operation", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      objects: {
+        edge: { type: "line", from: [0, 0], to: [10, 0] },
+        shifted: { type: "translate", target: "edge", by: [5, 5] },
+        turned: { type: "rotate", target: "shifted", angle: "90deg", origin: [0, 0] },
+        cut: { type: "split", target: "turned", at: [-5, 10] },
+      },
+    } as any);
+
+    const cut = resolved.objects.cut as any;
+    expect(cut.type).toBe("collection");
+    const first = (resolved.objects["cut[0]"] as any).segments[0];
+    const last = (resolved.objects["cut[1]"] as any).segments[0];
+    expect(first.x1).toBeCloseTo(-5);
+    expect(first.y1).toBeCloseTo(5);
+    expect(first.x2).toBeCloseTo(-5);
+    expect(first.y2).toBeCloseTo(10);
+    expect(last.x1).toBeCloseTo(-5);
+    expect(last.y1).toBeCloseTo(10);
+    expect(last.x2).toBeCloseTo(-5);
+    expect(last.y2).toBeCloseTo(15);
+  });
 });

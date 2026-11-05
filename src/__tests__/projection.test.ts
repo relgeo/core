@@ -44,6 +44,27 @@ objects:
     expect(serializeResolvedScene(scene)).toBe(serializeResolvedScene(scene));
   });
 
+  it("replays repeat collection order and child identity deterministically", () => {
+    const source = `version: 0.5
+objects:
+  marks:
+    type: repeat
+    count: 3
+    item:
+      type: point
+      at: [index * 10, 0]
+`;
+
+    const first = resolveGeometry(parseRelGeo(source));
+    const second = resolveGeometry(parseRelGeo(source));
+    const firstMarks = first.objects.marks as { children: string[] };
+    const secondMarks = second.objects.marks as { children: string[] };
+
+    expect(firstMarks.children).toEqual(["marks[0]", "marks[1]", "marks[2]"]);
+    expect(secondMarks.children).toEqual(firstMarks.children);
+    expect(serializeResolvedScene(first)).toBe(serializeResolvedScene(second));
+  });
+
   it("canonicalizes numeric noise while preserving semantic array order", () => {
     const comparison = compareResolvedSceneReplay(
       JSON.stringify({ b: 1.23456789012345, a: -0, nested: { z: undefined, a: 2 } }),
