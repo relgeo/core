@@ -50,6 +50,7 @@ import {
     type CornerModifiers,
     type Point2D,
 } from "../path-modifiers";
+import { addCurveEnvelopePoints } from "../curve-bounds";
 
 function resolvePointRef(ref: AnchorRef, ctx: ResolveContext) {
     const p = resolveAnchorValue(ref, ctx);
@@ -179,20 +180,11 @@ function getPathBBoxFromSegments(segments: NonNullable<ResolvedPath["segments"]>
         }
 
         if (segment.type === "quadratic") {
-            points.push(
-                { x: segment.x1, y: segment.y1 },
-                { x: segment.cpx, y: segment.cpy },
-                { x: segment.x2, y: segment.y2 }
-            );
+            addCurveEnvelopePoints(points, segment);
             return;
         }
 
-        points.push(
-            { x: segment.x1, y: segment.y1 },
-            { x: segment.cp1x, y: segment.cp1y },
-            { x: segment.cp2x, y: segment.cp2y },
-            { x: segment.x2, y: segment.y2 }
-        );
+        addCurveEnvelopePoints(points, segment);
     });
 
     return getPathBBox(points);
@@ -440,6 +432,9 @@ export function resolveRect(id: string, obj: RectObject, ctx: ResolveContext): R
         height = normalizeUnit(evaluateExpression(obj.size[1], evalCtx), ctx.targetUnit);
         assertFiniteScalar(width, "size[0]", id);
         assertFiniteScalar(height, "size[1]", id);
+        if (width <= 0 || height <= 0) {
+            throw new ResolveError("Rect size values must be positive", "INVALID_VALUE", id, "size");
+        }
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, id, "size");
     }
@@ -504,6 +499,9 @@ export function resolveLine(id: string, obj: LineObject, ctx: ResolveContext): R
             y2 = tangentPoint.y;
         } else if (obj.length !== undefined && obj.direction !== undefined) {
             const len = normalizeUnit(evaluateExpression(obj.length, evalCtx), ctx.targetUnit);
+            if (!Number.isFinite(len) || len <= 0) {
+                throw new ResolveError("Line length must be finite and positive", "INVALID_VALUE", id, "length");
+            }
             const dir = obj.direction;
             if (dir === "right") { x2 = x1 + len; y2 = y1; }
             else if (dir === "left") { x2 = x1 - len; y2 = y1; }
@@ -566,6 +564,9 @@ export function resolveCircle(id: string, obj: CircleObject, ctx: ResolveContext
         assertFiniteScalar(cx, "center.x", id);
         assertFiniteScalar(cy, "center.y", id);
         assertFiniteScalar(radius, "radius", id);
+        if (radius <= 0) {
+            throw new ResolveError("Circle radius must be positive", "INVALID_VALUE", id, "radius");
+        }
     } catch (e) {
         if (ctx.mode !== "editor") wrapError(e, id, "circle resolution");
     }
@@ -649,7 +650,8 @@ export function resolveEllipse(id: string, obj: EllipseObject, ctx: ResolveConte
             throw new ResolveError(
                 "Ellipse rx and ry must be positive",
                 "ELLIPSE_INVALID_RADIUS",
-                id
+                id,
+                "radius"
             );
         }
     } catch (e) {
@@ -770,7 +772,7 @@ export function resolveArc(id: string, obj: ArcObject, ctx: ResolveContext): Res
             const center = resolvePointRef(obj.center, ctx);
             const radius = normalizeUnit(evaluateExpression(obj.radius, evalCtx), ctx.targetUnit);
             if (radius <= 0) {
-                throw new ResolveError("Arc radius must be positive", "DEGENERATE_ARC");
+                throw new ResolveError("Arc radius must be positive", "DEGENERATE_ARC", id, "radius");
             }
 
             const startAngle = evaluateExpression(obj.startAngle, evalCtx);

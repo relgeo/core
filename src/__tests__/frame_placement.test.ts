@@ -94,6 +94,45 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
     expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(/FRAME_RESOLUTION_FAILED/);
   });
 
+  it("rejects unknown fields in on.path and on.frame contracts", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        guide: { type: "line", from: [0, 0], to: [10, 0] } as any,
+        marker: {
+          type: "rect",
+          size: [2, 2],
+          on: { path: { path: "guide", t: 0.5, rotate: 15 } },
+        } as any,
+      },
+    };
+
+    expect(() => new Validator(doc).validate()).toThrow(expect.objectContaining({
+      code: "UNKNOWN_FIELD",
+      path: "objects.marker.on.path.rotate",
+    }));
+  });
+
+  it("reports unknown on.path anchors at the namespace-specific field path", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      objects: {
+        guide: { type: "line", from: [0, 0], to: [10, 0] } as any,
+        marker: {
+          type: "rect",
+          size: [2, 2],
+          on: { path: { path: "guide", t: 0.5, anchor: "missingAnchor" } },
+        } as any,
+      },
+    };
+
+    expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow(expect.objectContaining({
+      code: "UNKNOWN_ANCHOR",
+      objectId: "marker",
+      path: "on.path.anchor",
+    }));
+  });
+
   it("fails resolution if frameAt receives a non-finite t", () => {
     const doc: RelGeoDocument = {
       version: 0.5,
@@ -192,6 +231,33 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
     expect(resolvedNotch.transform).toBeUndefined();
   });
 
+  it("keeps on.path unrotated while honoring an explicit object anchor", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        L: {
+          type: "line",
+          from: [0, 0],
+          to: [100, 100]
+        } as any,
+        marker: {
+          type: "rect",
+          size: [10, 4],
+          on: { path: { path: "L", t: 0.5, anchor: "topLeft" } }
+        } as any
+      }
+    };
+
+    const validator = new Validator(doc);
+    expect(() => validator.validate()).not.toThrow();
+
+    const marker = resolveGeometry(doc, { textMetrics: mockTextMetrics }).objects.marker as any;
+    expect(marker.x).toBeCloseTo(50);
+    expect(marker.y).toBeCloseTo(50);
+    expect(marker.transform).toBeUndefined();
+  });
+
   it("correctly resolves tAtLength query on a line", () => {
     const doc: RelGeoDocument = {
       version: 0.4,
@@ -221,6 +287,34 @@ describe("v0.4: Frame & Oriented Placement (Phase D)", () => {
 
     expect(resolvedNotch).toBeDefined();
     expect(resolvedNotch.anchors.pt.x).toBeCloseTo(25);
+  });
+
+  it("rejects non-finite tAtLength parameters with a stable query diagnostic", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      parameters: {
+        targetLength: { type: "number", default: Number.NaN },
+      },
+      objects: {
+        L: {
+          type: "line",
+          from: [0, 0],
+          to: [100, 0],
+        } as any,
+        notch: {
+          type: "rect",
+          size: [10, 4],
+          anchors: {
+            pt: ["tAtLength(L, targetLength) * 100", 0],
+          },
+        } as any,
+      },
+    };
+
+    const validator = new Validator(doc);
+    expect(() => validator.validate()).not.toThrow();
+    expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics }))
+      .toThrow(/INVALID_T_AT_LENGTH/);
   });
 
   it("rejects non-finite transform values at the resolver boundary", () => {

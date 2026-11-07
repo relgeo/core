@@ -63,10 +63,17 @@ function applyObjectStylePreset(
         ? Object.fromEntries(Object.entries((obj as any).meta).filter(([key]) => key !== "inherit"))
         : obj.meta;
 
+    const resolvedPreset = resolveStructuredInherit(
+        presetName,
+        ctx,
+        new Set(),
+        metadataInheritOptions,
+    );
+
     return {
         ...obj,
         meta: {
-            ...(styleDef as Record<string, unknown>),
+            ...resolvedPreset,
             ...(inheritedMeta as Record<string, unknown>),
             ...(localMeta as Record<string, unknown>),
         },

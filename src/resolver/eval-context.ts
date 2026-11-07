@@ -102,7 +102,9 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                         return wrapTypedValue(anchorVal);
                     }
                 } catch (e) {
-                    // Fall through to generic object field check
+                    // Preserve structured geometry/query failures. Only an
+                    // absent anchor should fall through to a generic field.
+                    if (e && typeof e === "object" && "code" in e) throw e;
                 }
             }
             if (val && typeof val === "object" && member in val) {
@@ -112,6 +114,12 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
         },
         getIndex: (arr: TypedValue, index: number | number[]) => {
             const val = arr.value;
+            const indices = Array.isArray(index) ? index : [index];
+            if (indices.some((candidate) =>
+                typeof candidate !== "number" || !Number.isFinite(candidate) || !Number.isInteger(candidate) || candidate < 0
+            )) {
+                throw collectionError(`Collection index must be a non-negative integer`);
+            }
             if (arr.type === "object" && val && val.type === "collection") {
                 if (Array.isArray(index)) {
                     const childId = `${val.id}[${index[0]},${index[1]}]`;
@@ -142,6 +150,7 @@ export function createEvalContext(ctx: ResolveContext): EvalContext {
                     }
                     return wrapTypedValue(item);
                 }
+                throw collectionError(`Index ${index} out of bounds on array`);
             }
             return undefined;
         },

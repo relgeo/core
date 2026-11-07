@@ -7,7 +7,7 @@ import { resolveAnchorValue } from "../anchors";
 import { normalizeUnit } from "../../units";
 import { applyObjectPlacementAndTransform } from "./utils";
 import { getObjectBoundingBox } from "../geometry-utils";
-import { stripErrorCodePrefix } from "../../errors";
+import { normalizeErrorCode, stripErrorCodePrefix } from "../../errors";
 
 function throwRepeatError(
     message: string,
@@ -16,6 +16,40 @@ function throwRepeatError(
     path: string,
 ): never {
     throw new ResolveError(message, code, id, path);
+}
+
+function evaluateRepeatCount(value: string, evalCtx: ReturnType<typeof createEvalContext>, id: string, path: string): any {
+    try {
+        return evaluateExpression(value, evalCtx);
+    } catch (error: any) {
+        const message = stripErrorCodePrefix(error instanceof Error ? error.message : String(error));
+        throwRepeatError(message, normalizeErrorCode(error?.code, message, "INVALID_VALUE"), id, path);
+    }
+}
+
+function evaluateRepeatLength(
+    value: string | number,
+    evalCtx: ReturnType<typeof createEvalContext>,
+    targetUnit: ResolveContext["targetUnit"],
+    id: string,
+    path: string,
+): number {
+    try {
+        const evaluated = typeof value === "string" ? evaluateExpression(value, evalCtx) : value;
+        const normalized = Number(normalizeUnit(evaluated, targetUnit));
+        if (!Number.isFinite(normalized)) {
+            throwRepeatError(
+                "repeat length must resolve to a finite number",
+                "INVALID_VALUE",
+                id,
+                path,
+            );
+        }
+        return normalized;
+    } catch (error: any) {
+        const message = stripErrorCodePrefix(error instanceof Error ? error.message : String(error));
+        throwRepeatError(message, normalizeErrorCode(error?.code, message, "INVALID_VALUE"), id, path);
+    }
 }
 
 function isClosedPathLike(obj: any): boolean {
@@ -131,20 +165,10 @@ export function resolveRepeat(
         }
 
         const startOffset = along.startOffset !== undefined
-            ? Number(normalizeUnit(
-                typeof along.startOffset === "string"
-                    ? evaluateExpression(along.startOffset, evalCtx)
-                    : along.startOffset,
-                ctx.targetUnit
-            ))
+            ? evaluateRepeatLength(along.startOffset, evalCtx, ctx.targetUnit, id, `objects.${id}.along.startOffset`)
             : 0;
         const endOffset = along.endOffset !== undefined
-            ? Number(normalizeUnit(
-                typeof along.endOffset === "string"
-                    ? evaluateExpression(along.endOffset, evalCtx)
-                    : along.endOffset,
-                ctx.targetUnit
-            ))
+            ? evaluateRepeatLength(along.endOffset, evalCtx, ctx.targetUnit, id, `objects.${id}.along.endOffset`)
             : 0;
 
         const usableLength = totalLength - startOffset - endOffset;
@@ -169,11 +193,13 @@ export function resolveRepeat(
         let distanceStep = 0;
 
         if (spacing === "fixed-distance") {
-            let distanceVal = along.distance;
-            if (typeof distanceVal === "string") {
-                distanceVal = evaluateExpression(distanceVal, evalCtx);
-            }
-            distanceStep = Number(normalizeUnit(distanceVal, ctx.targetUnit));
+            distanceStep = evaluateRepeatLength(
+                along.distance,
+                evalCtx,
+                ctx.targetUnit,
+                id,
+                `objects.${id}.along.distance`,
+            );
             if (!Number.isFinite(distanceStep) || distanceStep <= 0) {
                 throwRepeatError(
                     `repeat.along distance must be a positive length, got ${along.distance}`,
@@ -186,7 +212,7 @@ export function resolveRepeat(
         } else {
             let countVal = along.count;
             if (typeof countVal === "string") {
-                countVal = evaluateExpression(countVal, evalCtx);
+                countVal = evaluateRepeatCount(countVal, evalCtx, id, `objects.${id}.along.count`);
             }
             count = Number(countVal);
             if (!isPositiveInteger(count)) {
@@ -402,11 +428,11 @@ export function resolveRepeat(
         }
     } else if (obj.polar) {
         let countVal = obj.polar.count;
-        if (typeof countVal === "string") countVal = evaluateExpression(countVal, evalCtx);
+        if (typeof countVal === "string") countVal = evaluateRepeatCount(countVal, evalCtx, id, `objects.${id}.polar.count`);
         const count = Number(countVal);
         if (!isPositiveInteger(count)) {
             throwRepeatError(
-                `polar count must be a positive integer, got ${countVal}`,
+                `polar count must be a positive integer, got ${String(countVal)}`,
                 "INVALID_REPEAT_COUNT",
                 id,
                 `objects.${id}.polar.count`,
@@ -510,11 +536,11 @@ export function resolveRepeat(
         }
     } else {
         let countVal = obj.count || 1;
-        if (typeof countVal === "string") countVal = evaluateExpression(countVal, evalCtx);
+        if (typeof countVal === "string") countVal = evaluateRepeatCount(countVal, evalCtx, id, `objects.${id}.count`);
         const count = Number(countVal);
         if (!isPositiveInteger(count)) {
             throwRepeatError(
-                `repeat count must be a positive integer, got ${countVal}`,
+                `repeat count must be a positive integer, got ${String(countVal)}`,
                 "INVALID_REPEAT_COUNT",
                 id,
                 `objects.${id}.count`,

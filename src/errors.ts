@@ -89,7 +89,10 @@ export function hasStructuredDiagnostic(
 ): error is Error & Pick<RelGeoError, "phase" | "code"> {
   if (!(error instanceof Error) || typeof error !== "object") return false;
   const candidate = error as Partial<RelGeoError>;
-  return typeof candidate.phase === "string" && typeof candidate.code === "string";
+  // A compatible-looking Error is only safe to cross a public boundary when
+  // both discriminators are members of the normative public catalog. Invalid
+  // values must still go through normalization instead of being re-thrown.
+  return isDiagnosticPhase(candidate.phase) && isRelGeoErrorCode(candidate.code);
 }
 
 /** True when a code is part of the public core error catalog. */
@@ -209,6 +212,44 @@ function inferPhase(code: RelGeoErrorCode): RelGeoDiagnosticPhase {
   return "resolve";
 }
 
+const DIAGNOSTIC_PHASES = new Set<RelGeoDiagnosticPhase>([
+  "parse",
+  "validate",
+  "resolve",
+  "runtime",
+  "constraint",
+]);
+
+const DIAGNOSTIC_SEVERITIES = new Set<RelGeoDiagnosticSeverity>([
+  "error",
+  "warning",
+  "info",
+]);
+
+function isDiagnosticPhase(value: unknown): value is RelGeoDiagnosticPhase {
+  return typeof value === "string" && DIAGNOSTIC_PHASES.has(value as RelGeoDiagnosticPhase);
+}
+
+function isDiagnosticSeverity(value: unknown): value is RelGeoDiagnosticSeverity {
+  return typeof value === "string" && DIAGNOSTIC_SEVERITIES.has(value as RelGeoDiagnosticSeverity);
+}
+
+function safeDiagnosticMessage(error: unknown, candidate: Partial<RelGeoError>): string {
+  const message = diagnosticSourceMessage(error, candidate);
+  const normalized = stripErrorCodePrefix(message).trim();
+  return normalized || "Unknown error";
+}
+
+function diagnosticSourceMessage(error: unknown, candidate: Partial<RelGeoError>): string {
+  return typeof candidate.message === "string"
+    ? candidate.message
+    : error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown error";
+}
+
 /** Structured error used by public helpers that otherwise expose parser errors. */
 export class CoreError extends Error implements RelGeoError {
   public readonly phase: RelGeoDiagnosticPhase;
@@ -223,8 +264,8 @@ export class CoreError extends Error implements RelGeoError {
     super(`${code}: ${stripErrorCodePrefix(message)}`);
     this.name = "CoreError";
     this.code = code;
-    this.phase = options.phase;
-    this.severity = options.severity ?? "error";
+    this.phase = isDiagnosticPhase(options.phase) ? options.phase : "resolve";
+    this.severity = isDiagnosticSeverity(options.severity) ? options.severity : "error";
     this.path = options.path;
     this.objectId = options.objectId;
     this.dependencyChain = options.dependencyChain;
@@ -235,7 +276,8 @@ export class CoreError extends Error implements RelGeoError {
 /** Convert any public-boundary failure into the stable diagnostic shape. */
 export function toDiagnostic(error: unknown, options: DiagnosticOptions = {}): RelGeoDiagnostic {
   const candidate = (error && typeof error === "object" ? error : {}) as Partial<RelGeoError>;
-  const rawMessage = error instanceof Error ? error.message : String(error);
+  const rawMessage = diagnosticSourceMessage(error, candidate);
+  const message = safeDiagnosticMessage(error, candidate);
   const prefixedCode = rawMessage.match(ERROR_CODE_PREFIX)?.[1];
   const code = normalizeErrorCode(
     candidate.code ?? prefixedCode,
@@ -245,12 +287,20 @@ export function toDiagnostic(error: unknown, options: DiagnosticOptions = {}): R
   const inferredPhase = inferPhase(code);
   const phase = RUNTIME_CODES.has(code) || code === "CONSTRAINT_VIOLATION"
     ? inferredPhase
-    : options.phase ?? candidate.phase ?? inferredPhase;
-  const severity = candidate.severity ?? options.severity ?? "error";
+    : isDiagnosticPhase(options.phase)
+      ? options.phase
+      : isDiagnosticPhase(candidate.phase)
+        ? candidate.phase
+        : inferredPhase;
+  const severity = isDiagnosticSeverity(options.severity)
+    ? options.severity
+    : isDiagnosticSeverity(candidate.severity)
+      ? candidate.severity
+      : "error";
 
   return {
     code,
-    message: stripErrorCodePrefix(rawMessage),
+    message,
     path: candidate.path ?? options.path,
     objectId: candidate.objectId ?? options.objectId,
     dependencyChain: candidate.dependencyChain ?? options.dependencyChain,
@@ -280,16 +330,31 @@ export function sortDiagnostics(diagnostics: RelGeoDiagnostic[]): RelGeoDiagnost
   };
   const unique = new Map<string, RelGeoDiagnostic>();
   for (const diagnostic of diagnostics) {
-    const range = diagnostic.range
-      ? `${diagnostic.range.start.line}:${diagnostic.range.start.column}`
-      : "";
-    const key = [
+    const stableValue = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(stableValue);
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left === right ? 0 : left < right ? -1 : 1)
+            .map(([key, entry]) => [key, stableValue(entry)]),
+        );
+      }
+      return value;
+    };
+    const key = JSON.stringify([
       diagnostic.phase,
+      diagnostic.severity,
       diagnostic.path ?? "",
+      diagnostic.objectId ?? "",
       diagnostic.code,
       diagnostic.message,
-      range,
-    ].join("\u0000");
+      stableValue(diagnostic.range),
+      stableValue(diagnostic.dependencyChain),
+      diagnostic.constraintType ?? "",
+      diagnostic.origin ?? "",
+      stableValue(diagnostic.expected),
+      stableValue(diagnostic.actual),
+    ]);
     if (!unique.has(key)) unique.set(key, diagnostic);
   }
   return [...unique.values()].sort((left, right) => {
@@ -340,9 +405,9 @@ export function normalizeResolveError(
   path?: string,
 ): ResolveError {
   const candidate = (error && typeof error === "object" ? error : {}) as Partial<RelGeoError>;
-  const rawMessage = error instanceof Error ? error.message : String(error);
+  const rawMessage = diagnosticSourceMessage(error, candidate);
+  const message = safeDiagnosticMessage(error, candidate);
   const code = normalizeErrorCode(candidate.code, rawMessage, "RESOLVE_ERROR");
-  const message = stripErrorCodePrefix(rawMessage);
   const resolvedObjectId = candidate.objectId ?? objectId;
   const resolvedPath = candidate.path ?? path;
 

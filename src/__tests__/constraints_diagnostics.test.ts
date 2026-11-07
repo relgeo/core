@@ -43,6 +43,7 @@ describe('Constraint Diagnostics', () => {
         expect(result.violations?.length).toBe(1);
         expect(result.violations?.[0].type).toBe('align');
         expect(result.violations?.[0].deviation).toBeGreaterThan(0);
+        expect(result.violations?.[0].involvedObjects).toEqual(['p1', 'p2']);
         expect(result.violations?.[0]).toMatchObject({
             severity: 'error',
             origin: 'constraint',
@@ -65,8 +66,9 @@ describe('Constraint Diagnostics', () => {
 
         const result = resolveGeometry(doc);
         expect(result.violations?.length).toBe(1);
-        expect(result.violations?.[0].type).toBe('parallel');
-        expect(result.violations?.[0].deviation).toBeCloseTo(Math.PI / 2);
+    expect(result.violations?.[0].type).toBe('parallel');
+    expect(result.violations?.[0].deviation).toBeCloseTo(Math.PI / 2);
+    expect(result.violations?.[0].involvedObjects).toEqual(['l1', 'l2']);
     });
 
     it('should accept equal constraint object-form and report violation when values differ', () => {
@@ -85,6 +87,24 @@ describe('Constraint Diagnostics', () => {
         expect(result.violations?.length).toBe(1);
         expect(result.violations?.[0].type).toBe('equal');
         expect(result.violations?.[0].deviation).toBeGreaterThan(0);
+        expect(result.violations?.[0].involvedObjects).toEqual(['l1', 'l2']);
+    });
+
+    it('should reject unknown equal-constraint references during validation', () => {
+        const doc: RelGeoDocument = {
+            version: '1.0',
+            objects: {
+                line: { type: 'line', from: [0, 0], to: [10, 0] },
+            },
+            constraints: [
+                { equal: ['missing.length', 'line.length'] },
+            ],
+        };
+
+        expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+            code: 'UNKNOWN_REFERENCE',
+            path: 'constraints[0].equal[0]',
+        }));
     });
 
     it('should report relation violations for degenerate geometry', () => {
@@ -93,7 +113,7 @@ describe('Constraint Diagnostics', () => {
             objects: {
                 flat: { type: 'line', from: [0, 0], to: [0, 0] },
                 guide: { type: 'line', from: [0, 20], to: [100, 20] },
-                circle: { type: 'circle', center: [50, 50], radius: 0 }
+                circle: { type: 'circle', center: [50, 50], radius: 1 }
             },
             constraints: [
                 { parallel: ['flat', 'guide'] },
@@ -112,5 +132,9 @@ describe('Constraint Diagnostics', () => {
             && typeof violation.expected === 'object'
             && typeof violation.actual === 'object',
         )).toBe(true);
+        expect(result.violations?.map(violation => violation.involvedObjects)).toEqual([
+            ['flat', 'guide'],
+            ['flat', 'circle'],
+        ]);
     });
 });

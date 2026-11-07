@@ -20,6 +20,16 @@ import { intersectLineCircle, intersectLineArc } from "./intersection";
 const EPSILON = 0.001;
 type PendingConstraintViolation = Omit<ConstraintViolation, 'severity' | 'origin' | 'expected' | 'actual'>;
 
+function referencedObjectId(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const match = value.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)/);
+    return match?.[1];
+}
+
+function referencedObjectIds(values: unknown[]): string[] {
+    return [...new Set(values.map(referencedObjectId).filter((value): value is string => Boolean(value)))];
+}
+
 function lineLength(line: ResolvedLine): number {
     return Math.hypot(line.x2 - line.x1, line.y2 - line.y1);
 }
@@ -88,7 +98,7 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
                         message: `Points are not aligned. Distance: ${deviation.toFixed(4)}`,
                         deviation,
                         path,
-                        involvedObjects: [],
+                        involvedObjects: referencedObjectIds([target, withRef]),
                         visualHelper: {
                             x1: targetValue.x,
                             y1: targetValue.y,
@@ -105,7 +115,7 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
                         message: `Scalar values are not aligned. Difference: ${deviation.toFixed(4)}`,
                         deviation,
                         path,
-                        involvedObjects: []
+                        involvedObjects: referencedObjectIds([target, withRef])
                     });
                 }
             }
@@ -124,7 +134,7 @@ export function processConstraints(constraints: ConstraintObject[], ctx: Resolve
                             message: `Values are not equal: ${values[j]} vs ${first}. Difference: ${deviation.toFixed(4)}`,
                             deviation,
                             path,
-                            involvedObjects: []
+                            involvedObjects: referencedObjectIds(rawEqualValues)
                         });
                     }
                 }

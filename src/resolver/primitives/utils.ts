@@ -7,6 +7,11 @@ import { createEvalContext } from "../eval-context";
 import { resolveAnchorValue } from "../anchors";
 import { calculateBoundingBox, getObjectBoundingBox } from "../geometry-utils";
 
+const STANDARD_PLACEMENT_ANCHORS = new Set([
+    "center", "topLeft", "topCenter", "topRight", "centerLeft", "centerRight",
+    "bottomLeft", "bottomCenter", "bottomRight", "top", "right", "bottom", "left",
+]);
+
 export function wrapError(e: any, id: string, path?: string): never {
     if (e instanceof ResolveError) throw e;
     if (hasStructuredDiagnostic(e)) throw e;
@@ -17,12 +22,23 @@ export function wrapError(e: any, id: string, path?: string): never {
 
 function resolveInsidePlacement(place: PlaceSpec, ctx: ResolveContext, evalCtx: ReturnType<typeof createEvalContext>) {
     const targetId = place.inside;
+    const objectId = ctx.currentObjectId || "";
     if (targetId === undefined || !ctx.objects[targetId]) {
-        throw new ResolveError(`Invalid expression syntax: Unknown identifier: ${targetId}`, "INVALID_EXPRESSION");
+        throw new ResolveError(
+            `Unknown placement container "${targetId}"`,
+            "UNKNOWN_REFERENCE",
+            objectId,
+            "place.inside",
+        );
     }
     const target = ctx.objects[targetId];
     if (target.type !== "rect") {
-        throw new ResolveError(`place.inside target "${targetId}" must be a rect`, "INVALID_VALUE");
+        throw new ResolveError(
+            `place.inside target "${targetId}" must be a rect`,
+            "INVALID_VALUE",
+            objectId,
+            "place.inside",
+        );
     }
 
     const bbox = getObjectBoundingBox(targetId, ctx.objects);
@@ -30,15 +46,20 @@ function resolveInsidePlacement(place: PlaceSpec, ctx: ResolveContext, evalCtx: 
     if (place.margin !== undefined) {
         margin = Number(normalizeUnit(evaluateExpression(place.margin, evalCtx), ctx.targetUnit));
         if (!Number.isFinite(margin) || margin < 0) {
-            throw new ResolveError(`place.inside margin must be a non-negative finite length`, "INVALID_VALUE");
+            throw new ResolveError(
+                `place.inside margin must be a non-negative finite length`,
+                "INVALID_VALUE",
+                objectId,
+                "place.margin",
+            );
         }
     }
     return { bbox, margin };
 }
 
-function assertFinitePlacement(value: number | undefined, path: string): void {
+function assertFinitePlacement(value: number | undefined, path: string, objectId?: string): void {
     if (value !== undefined && !Number.isFinite(value)) {
-        throw new ResolveError(`Placement value at ${path} must resolve to a finite number`, "INVALID_VALUE", undefined, path);
+        throw new ResolveError(`Placement value at ${path} must resolve to a finite number`, "INVALID_VALUE", objectId, path);
     }
 }
 
@@ -118,7 +139,7 @@ export function resolvePlaceX(place: PlaceSpec, width: number, ctx: ResolveConte
         else val = targetX - width / 2 + offset;
     }
 
-    assertFinitePlacement(val, "place.x");
+    assertFinitePlacement(val, "place.x", ctx.currentObjectId);
     return val !== undefined ? val : 0;
 }
 
@@ -184,7 +205,7 @@ export function resolvePlaceY(place: PlaceSpec, height: number, ctx: ResolveCont
         else val = targetY - height / 2 + offset;
     }
 
-    assertFinitePlacement(val, "place.y");
+    assertFinitePlacement(val, "place.y", ctx.currentObjectId);
     return val !== undefined ? val : 0;
 }
 
@@ -373,9 +394,11 @@ export function applyObjectPlacementAndTransform(
             let targetX = bbox.x + bbox.width / 2;
             let targetY = bbox.y + bbox.height / 2;
             let anchorVal = "center";
+            let anchorPath = "on.anchor";
             let onResolved = false;
 
             if (obj.on.point) {
+                anchorPath = "on.point.anchor";
                 const ptVal = evaluateExpression(obj.on.point.at, evalCtx);
                 if (ptVal && typeof ptVal === "object") {
                     let p = ptVal;
@@ -396,6 +419,7 @@ export function applyObjectPlacementAndTransform(
                     catch (e: any) { anchorVal = String(obj.on.point.anchor); }
                 }
             } else if (obj.on.path) {
+                anchorPath = "on.path.anchor";
                 const ptVal = evaluateExpression(`pointAt(${obj.on.path.path}, ${obj.on.path.t})`, evalCtx);
                 if (ptVal && typeof ptVal === "object" && "x" in ptVal && "y" in ptVal) {
                     targetX = Number(ptVal.x);
@@ -407,6 +431,7 @@ export function applyObjectPlacementAndTransform(
                     catch (e: any) { anchorVal = String(obj.on.path.anchor); }
                 }
             } else if (obj.on.frame) {
+                anchorPath = "on.frame.anchor";
                 const frameVal = evaluateExpression(`frameAt(${obj.on.frame.path}, ${obj.on.frame.t})`, evalCtx);
                 if (frameVal && typeof frameVal === "object") {
                     let f = frameVal;
@@ -448,6 +473,14 @@ export function applyObjectPlacementAndTransform(
                     else if (anchorVal === "bottomCenter" || anchorVal === "bottom") { baseX = bbox.x + bbox.width / 2; baseY = bbox.y + bbox.height; }
                     else if (anchorVal === "centerLeft" || anchorVal === "left") { baseX = bbox.x; baseY = bbox.y + bbox.height / 2; }
                     else if (anchorVal === "centerRight" || anchorVal === "right") { baseX = bbox.x + bbox.width; baseY = bbox.y + bbox.height / 2; }
+                    else if (!STANDARD_PLACEMENT_ANCHORS.has(anchorVal)) {
+                        throw new ResolveError(
+                            `Unknown placement anchor "${anchorVal}"`,
+                            "UNKNOWN_ANCHOR",
+                            ctx.currentObjectId || obj.id,
+                            anchorPath,
+                        );
+                    }
                 }
                 
                 dx = targetX - baseX;

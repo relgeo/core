@@ -171,6 +171,66 @@ describe("inherit resolution", () => {
     expect(mark.meta?.intent).toBe("inspection-mark");
   });
 
+  it("resolves inherit chains inside metaPresets and style aliases", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      styles: {
+        baseGuide: {
+          role: "guide",
+          stroke: "#334155",
+          strokeWidth: 1,
+        },
+        dashedGuide: {
+          inherit: "baseGuide",
+          dash: "4 2",
+        },
+      },
+      metaPresets: {
+        inspectionGuide: {
+          inherit: "dashedGuide",
+          opacity: 0.7,
+        },
+      },
+      objects: {
+        canonical: {
+          type: "line",
+          from: [0, 0],
+          to: [10, 0],
+          metaPreset: "inspectionGuide",
+          meta: { strokeWidth: 2 },
+        },
+        alias: {
+          type: "line",
+          from: [0, 10],
+          to: [10, 10],
+          style: "dashedGuide",
+          meta: { intent: "inspection" },
+        },
+      },
+    };
+
+    const resolved = resolveGeometry(doc);
+    const canonical = resolved.objects.canonical as ResolvedLine;
+    const alias = resolved.objects.alias as ResolvedLine;
+
+    expect(canonical.meta).toMatchObject({
+      role: "guide",
+      stroke: "#334155",
+      strokeWidth: 2,
+      dash: "4 2",
+      opacity: 0.7,
+    });
+    expect(canonical.meta).not.toHaveProperty("inherit");
+    expect(alias.meta).toMatchObject({
+      role: "guide",
+      stroke: "#334155",
+      strokeWidth: 1,
+      dash: "4 2",
+      intent: "inspection",
+    });
+    expect(alias.meta).not.toHaveProperty("inherit");
+  });
+
   it("throws CIRCULAR_INHERIT for cyclic structured inherit chains", () => {
     const doc: RelGeoDocument = {
       version: 0.5,

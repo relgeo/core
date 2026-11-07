@@ -375,6 +375,35 @@ describe("resolver values", () => {
     expect(line.meta?.strokeWidth).toBe(1);
   });
 
+  it("keeps canonical metadata and both compatibility aliases semantically equivalent", () => {
+    const base = {
+      type: "line" as const,
+      from: [0, 0] as [number, number],
+      to: [100, 0] as [number, number],
+    };
+    const canonical = resolveGeometry({
+      version: 0.5,
+      metaPresets: { guide: { stroke: "#123456", strokeWidth: 2 } },
+      objects: { line: { ...base, metaPreset: "guide" } },
+    });
+    const rootAlias = resolveGeometry({
+      version: 0.5,
+      styles: { guide: { stroke: "#123456", strokeWidth: 2 } },
+      objects: { line: { ...base, style: "guide" } },
+    });
+
+    const canonicalLine = canonical.objects.line as ResolvedLine;
+    const aliasLine = rootAlias.objects.line as ResolvedLine;
+    expect(aliasLine).toMatchObject({
+      type: canonicalLine.type,
+      x1: canonicalLine.x1,
+      y1: canonicalLine.y1,
+      x2: canonicalLine.x2,
+      y2: canonicalLine.y2,
+      meta: canonicalLine.meta,
+    });
+  });
+
   it("should resolve translate operation objects as reusable geometry", () => {
     const doc: RelGeoDocument = {
       version: 0.5,

@@ -2,7 +2,7 @@ import type { RelGeoDocument, ResolvedScene, RelGeoMode, ConstraintViolation, Re
 import { defaultTextMetricsProvider } from "../types";
 import { normalizeUnit, convertFromPx, convertToPx } from "../units";
 import { sortObjects, sortUnified } from "../graph";
-import type { ResolveOptions, ResolveContext } from "./types";
+import { ResolveError, type ResolveOptions, type ResolveContext } from "./types";
 import { resolveValues, evaluateSingleDerived } from "./values";
 import { resolveObject } from "./objects";
 import { processConstraints } from "./constraints";
@@ -273,6 +273,21 @@ function parseScale(scale: string | number | undefined): number {
     }
 
     const resolvedSheets: Record<string, ResolvedSheet> = {};
+    const evaluateSheetExpression = (
+        expression: string | number,
+        evalCtx: { scalars: Record<string, any>; targetUnit: typeof targetUnit },
+        path: string,
+    ): number => {
+        try {
+            const normalized = Number(normalizeUnit(evaluateExpression(expression, evalCtx), targetUnit));
+            if (!Number.isFinite(normalized)) {
+                throw new ResolveError("sheet expression must resolve to a finite number", "INVALID_VALUE", undefined, path);
+            }
+            return normalized;
+        } catch (error) {
+            throw normalizeResolveError(error, undefined, path);
+        }
+    };
     if (doc.sheets) {
         for (const [sheetId, sheetDef] of Object.entries(doc.sheets)) {
             let width = convertFromPx(convertToPx("297mm"), targetUnit); // Default A4 landscape
@@ -287,8 +302,8 @@ function parseScale(scale: string | number | undefined): number {
                 else if (s === "A1") { width = convertFromPx(convertToPx("841mm"), targetUnit); height = convertFromPx(convertToPx("594mm"), targetUnit); }
                 else if (s === "A0") { width = convertFromPx(convertToPx("1189mm"), targetUnit); height = convertFromPx(convertToPx("841mm"), targetUnit); }
             } else if (Array.isArray(size) && size.length === 2) {
-                width = normalizeUnit(evaluateExpression(size[0], evalCtx), targetUnit);
-                height = normalizeUnit(evaluateExpression(size[1], evalCtx), targetUnit);
+                width = evaluateSheetExpression(size[0], evalCtx, `sheets.${sheetId}.size[0]`);
+                height = evaluateSheetExpression(size[1], evalCtx, `sheets.${sheetId}.size[1]`);
             }
 
             if (sheetDef.orientation === "portrait") {
@@ -299,7 +314,7 @@ function parseScale(scale: string | number | undefined): number {
 
             const viewsPlacement: ResolvedSheetView[] = [];
             if (sheetDef.views) {
-                for (const placement of sheetDef.views) {
+                for (const [placementIndex, placement] of sheetDef.views.entries()) {
                     const view = resolvedViews[placement.use];
                     if (!view) continue;
 
@@ -307,11 +322,27 @@ function parseScale(scale: string | number | undefined): number {
                     let y = 0;
                     if (placement.place) {
                         if (placement.place.topLeft) {
-                            x = normalizeUnit(evaluateExpression(placement.place.topLeft[0], evalCtx), targetUnit);
-                            y = normalizeUnit(evaluateExpression(placement.place.topLeft[1], evalCtx), targetUnit);
+                            x = evaluateSheetExpression(
+                                placement.place.topLeft[0],
+                                evalCtx,
+                                `sheets.${sheetId}.views[${placementIndex}].place.topLeft[0]`,
+                            );
+                            y = evaluateSheetExpression(
+                                placement.place.topLeft[1],
+                                evalCtx,
+                                `sheets.${sheetId}.views[${placementIndex}].place.topLeft[1]`,
+                            );
                         } else if (placement.place.center) {
-                            const cx = normalizeUnit(evaluateExpression(placement.place.center[0], evalCtx), targetUnit);
-                            const cy = normalizeUnit(evaluateExpression(placement.place.center[1], evalCtx), targetUnit);
+                            const cx = evaluateSheetExpression(
+                                placement.place.center[0],
+                                evalCtx,
+                                `sheets.${sheetId}.views[${placementIndex}].place.center[0]`,
+                            );
+                            const cy = evaluateSheetExpression(
+                                placement.place.center[1],
+                                evalCtx,
+                                `sheets.${sheetId}.views[${placementIndex}].place.center[1]`,
+                            );
                             x = cx - view.bbox.width / 2;
                             y = cy - view.bbox.height / 2;
                         }

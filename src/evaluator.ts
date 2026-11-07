@@ -249,6 +249,10 @@ export class Evaluator {
     return result;
   }
 
+  private isNumericType(value: TypedValue): boolean {
+    return value.type === "number" || value.type === "length";
+  }
+
   private parseEquality(): TypedValue {
     let result = this.parseRelational();
     while (this.pos < this.tokens.length) {
@@ -303,10 +307,18 @@ export class Evaluator {
         const term = this.parseTerm();
         const rVal = this.unwrap(result);
         const tVal = this.unwrap(term);
-        if (typeof rVal !== "number" || typeof tVal !== "number") {
+        if (
+          !this.isNumericType(result) ||
+          !this.isNumericType(term) ||
+          typeof rVal !== "number" ||
+          typeof tVal !== "number"
+        ) {
           throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
         }
-        result = { type: "number", value: token === "+" ? rVal + tVal : rVal - tVal };
+        result = {
+          type: result.type === "length" || term.type === "length" ? "length" : "number",
+          value: token === "+" ? rVal + tVal : rVal - tVal,
+        };
       } else {
         break;
       }
@@ -325,15 +337,32 @@ export class Evaluator {
         const factor = this.parseExponentiation();
         const rVal = this.unwrap(result);
         const fVal = this.unwrap(factor);
-        if (typeof rVal !== "number" || typeof fVal !== "number") {
+        if (
+          !this.isNumericType(result) ||
+          !this.isNumericType(factor) ||
+          typeof rVal !== "number" ||
+          typeof fVal !== "number"
+        ) {
           throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
         }
         if (token === "*") {
-          result = { type: "number", value: rVal * fVal };
+          if (result.type === "length" && factor.type === "length") {
+            throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
+          }
+          result = {
+            type: result.type === "length" || factor.type === "length" ? "length" : "number",
+            value: rVal * fVal,
+          };
         } else if (token === "/") {
           if (fVal === 0) throwEvaluatorError("Division by zero");
-          result = { type: "number", value: rVal / fVal };
+          if (result.type === "number" && factor.type === "length") {
+            throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
+          }
+          result = { type: result.type as "number" | "length", value: rVal / fVal };
         } else if (token === "%") {
+          if (result.type !== "number" || factor.type !== "number") {
+            throwEvaluatorError(`Arithmetic operations are only allowed on numbers/lengths`);
+          }
           result = { type: "number", value: rVal % fVal };
         }
       } else {
@@ -451,6 +480,9 @@ export class Evaluator {
         throwEvaluatorError(`Index must be a number`);
       }
       if (arr.type === "array" || arr.type === "collection" || Array.isArray(arr.value)) {
+        if (!Number.isFinite(unwrappedIdx) || !Number.isInteger(unwrappedIdx) || unwrappedIdx < 0) {
+          throwEvaluatorError(`Index must be a non-negative integer`);
+        }
         const item = arr.value[unwrappedIdx];
         if (item === undefined) {
           if (this.options.allowUnknownIdentifiers) {
@@ -486,10 +518,10 @@ export class Evaluator {
     if (token === "-") {
       const factor = this.parseFactor();
       const val = this.unwrap(factor);
-      if (typeof val !== "number") {
+      if (!this.isNumericType(factor) || typeof val !== "number") {
         throwEvaluatorError("Unary minus can only be applied to numbers");
       }
-      return { type: "number", value: -val };
+      return { type: factor.type, value: -val };
     }
 
     if (token === "!") {
@@ -795,7 +827,9 @@ export class Evaluator {
             else {
               const subEval = new Evaluator(this.context, this.options);
               const targetLen = Number(subEval.evaluate(args[1]));
-              if (Number.isNaN(targetLen)) throwEvaluatorError(`Invalid parameter targetLength in tAtLength: ${args[1]}`);
+              if (!Number.isFinite(targetLen)) {
+                throwEvaluatorError(`INVALID_T_AT_LENGTH: targetLength must be finite, got ${targetLen}`);
+              }
               computedVal = this.getTAtLengthFromObject(obj, targetLen, args[0]);
             }
           } else if (token === "intersection") {
@@ -813,7 +847,7 @@ export class Evaluator {
                 const raw = args[2];
                 if (raw === "first" || raw === "last") {
                   selector = raw;
-                } else if (/^\d+$/.test(raw)) {
+                } else if (/^[+-]?\d+$/.test(raw)) {
                   selector = { index: parseInt(raw, 10) };
                 } else if (raw.startsWith("nearest(") && raw.endsWith(")")) {
                   const refId = raw.slice(8, -1);
@@ -827,7 +861,7 @@ export class Evaluator {
                   selector = { farthest: this.getPointFromObject(refObj) };
                 } else if (raw.startsWith("{") && raw.endsWith("}")) {
                   // Support {index: n}
-                  const match = raw.match(/\{\s*index\s*:\s*(\d+)\s*\}/);
+                  const match = raw.match(/\{\s*index\s*:\s*([+-]?\d+)\s*\}/);
                   if (match) {
                     selector = { index: parseInt(match[1], 10) };
                   } else {
@@ -1401,7 +1435,7 @@ export class Evaluator {
     if (totalLen === 0) {
       throwEvaluatorError(`PATH_LENGTH_UNAVAILABLE: Path length is zero or unavailable for object "${label}"`);
     }
-    if (targetLen < 0 || targetLen > totalLen) {
+    if (!Number.isFinite(targetLen) || targetLen < 0 || targetLen > totalLen) {
       throwEvaluatorError(`INVALID_T_AT_LENGTH: targetLength must be between 0 and total length (${totalLen}), got ${targetLen}`);
     }
     if (targetLen === 0) return 0;

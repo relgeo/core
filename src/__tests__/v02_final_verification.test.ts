@@ -60,7 +60,7 @@ objects:
         expect(child.y).toBe(5);
     });
 
-    it("should reject non-rect inside targets and negative margins", () => {
+    it("should reject non-rect inside targets and negative margins with placement context", () => {
         const nonRectTarget = `
 version: 0.2
 objects:
@@ -73,7 +73,15 @@ objects:
     size: [20, 10]
     place: { inside: guide }
 `;
-        expect(() => compileRelGeo(nonRectTarget)).toThrow(/place\.inside target "guide" must be a rect/);
+        try {
+            compileRelGeo(nonRectTarget);
+            throw new Error("expected non-rect inside placement to fail");
+        } catch (error: any) {
+            expect(error.code).toBe("INVALID_VALUE");
+            expect(error.objectId).toBe("child");
+            expect(error.path).toBe("place.inside");
+            expect(error.message).toMatch(/place\.inside target "guide" must be a rect/);
+        }
 
         const negativeMargin = `
 version: 0.2
@@ -89,7 +97,35 @@ objects:
       inside: parent
       margin: -1
 `;
-        expect(() => compileRelGeo(negativeMargin)).toThrow(/place\.inside margin must be a non-negative finite length/);
+        try {
+            compileRelGeo(negativeMargin);
+            throw new Error("expected negative placement margin to fail");
+        } catch (error: any) {
+            expect(error.code).toBe("INVALID_VALUE");
+            expect(error.objectId).toBe("child");
+            expect(error.path).toBe("place.margin");
+            expect(error.message).toMatch(/place\.inside margin must be a non-negative finite length/);
+        }
+    });
+
+    it("should report unknown inside containers as structured placement references", () => {
+        const yaml = `
+version: 0.2
+objects:
+  child:
+    type: rect
+    size: [20, 10]
+    place: { inside: missing }
+`;
+
+        try {
+            compileRelGeo(yaml);
+            throw new Error("expected unknown placement container to fail");
+        } catch (error: any) {
+            expect(error.code).toBe("UNKNOWN_REFERENCE");
+            expect(error.objectId).toBe("child");
+            expect(error.path).toBe("place.inside");
+        }
     });
 
     it("should support scalar align.offset with intuitive sign (target = with + offset)", () => {

@@ -64,4 +64,38 @@ objects:
         expect(Q.x).toBeCloseTo(100);
         expect(Q.y).toBeCloseTo(60);
     });
+
+    it("composes nested group transformations for an external custom anchor", () => {
+        const yaml = `
+version: 0.2
+objects:
+  Outer:
+    type: group
+    children: [Inner]
+    transform:
+      - translate: [100, 0]
+  Inner:
+    type: group
+    children: [P]
+    anchors:
+      hook: [10, 0]
+    transform:
+      - rotate:
+          angle: 90deg
+          origin: [0, 0]
+  P:
+    type: point
+    at: [0, 0]
+  Q:
+    type: point
+    at: Inner.hook
+`;
+        const doc = parseRelGeo(yaml) as RelGeoDocument;
+        const scene = resolveGeometry(doc);
+        const Q = scene.objects.Q as any;
+
+        // Inner rotates [10, 0] to [0, 10], then Outer translates it.
+        expect(Q.x).toBeCloseTo(100);
+        expect(Q.y).toBeCloseTo(10);
+    });
 });

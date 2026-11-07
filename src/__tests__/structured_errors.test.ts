@@ -139,6 +139,28 @@ objects:
     }
   });
 
+  it("preserves the expression field path for missing named anchors", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        panel: { type: "rect", size: [10, 10], place: { topLeft: [0, 0] } },
+        marker: { type: "point", at: "panel.notAnAnchor" },
+      },
+    } as any;
+
+    try {
+      new Validator(doc).validate();
+      throw new Error("expected missing anchor validation failure");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "UNKNOWN_ANCHOR",
+        objectId: undefined,
+        path: "objects.marker.at",
+        phase: "validate",
+      });
+    }
+  });
+
   it("preserves structured errors from per-object resolver helpers", () => {
     const doc = {
       version: "0.5",
@@ -171,8 +193,25 @@ objects:
       },
     } as any;
 
-    expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
       code: "INVALID_VALUE",
+      phase: "resolve",
+      objectId: "broken",
+      path: "objects.broken.count",
+    }));
+  });
+
+  it("normalizes dynamic divide counts with the count field path", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        broken: { type: "divide", count: "missingCount", target: "line" },
+        line: { type: "line", from: [0, 0], to: [10, 0] },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_IDENTIFIER",
       phase: "resolve",
       objectId: "broken",
       path: "objects.broken.count",
@@ -215,6 +254,48 @@ objects:
     }));
   });
 
+  it("normalizes dynamic repeat counts with the count field path", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        broken: {
+          type: "repeat",
+          count: "missingCount",
+          item: { type: "point", at: [0, 0] },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_IDENTIFIER",
+      phase: "resolve",
+      objectId: "broken",
+      path: "objects.broken.count",
+    }));
+  });
+
+  it("normalizes typed component parameter expression failures with parameter context", () => {
+    const doc = {
+      version: "0.5",
+      components: {
+        panel: {
+          parameters: { width: { type: "number", default: 10 } },
+          objects: { body: { type: "rect", size: ["width", 5] } },
+        },
+      },
+      objects: {
+        broken: { type: "component", use: "panel", params: { width: "missingWidth" } },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_IDENTIFIER",
+      phase: "resolve",
+      objectId: "broken",
+      path: "objects.broken.params.width",
+    }));
+  });
+
   it("keeps collection access failures structured with runtime context", () => {
     const doc = {
       version: "0.5",
@@ -225,6 +306,25 @@ objects:
           item: { type: "circle", radius: 5, center: [0, 0] },
         },
         broken: { type: "point", at: ["holes[5].radius", 10] },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc)).toThrowError(expect.objectContaining({
+      code: "INVALID_COLLECTION_ACCESS",
+      phase: "runtime",
+      objectId: "broken",
+      path: "objects.broken",
+    }));
+  });
+
+  it("keeps array index failures structured with runtime context", () => {
+    const doc = {
+      version: "0.5",
+      parameters: {
+        points: { type: "array", default: [10, 20] },
+      },
+      objects: {
+        broken: { type: "point", at: ["points[2]", 0] },
       },
     } as any;
 
@@ -295,6 +395,32 @@ objects:
       code: "INVALID_OFFSET",
       phase: "validate",
       path: "objects.shifted.offset.distance",
+    }));
+  });
+
+  it("keeps repeat.along length expression failures tied to their field path", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        guide: { type: "line", from: [0, 0], to: [10, 0] },
+        marks: {
+          type: "repeat",
+          along: {
+            target: "guide",
+            count: 2,
+            spacing: "uniform-t",
+            startOffset: "missingOffset",
+          },
+          item: { type: "circle", radius: 1 },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "UNKNOWN_IDENTIFIER",
+      phase: "resolve",
+      objectId: "marks",
+      path: "objects.marks.along.startOffset",
     }));
   });
 
@@ -377,6 +503,52 @@ objects:
       objectId: "repeated",
       path: "objects.repeated.along",
       phase: "resolve",
+    }));
+  });
+
+  it("does not leak a raw Error for non-finite repeat lengths", () => {
+    const doc = {
+      version: "0.5",
+      objects: {
+        guide: { type: "line", from: [0, 0], to: [10, 0] },
+        repeated: {
+          type: "repeat",
+          along: {
+            target: "guide",
+            count: 2,
+            spacing: "uniform-t",
+            startOffset: Number.POSITIVE_INFINITY,
+          },
+          item: { type: "point", at: [0, 0] },
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "INVALID_VALUE",
+      phase: "resolve",
+      objectId: "repeated",
+      path: "objects.repeated.along.startOffset",
+    }));
+  });
+
+  it("attaches stable sheet paths to expression failures", () => {
+    const doc = {
+      version: "0.5",
+      objects: { origin: { type: "point", at: [0, 0] } },
+      views: { detail: { target: "origin" } },
+      sheets: {
+        primary: {
+          size: [Number.POSITIVE_INFINITY, 100],
+          views: [{ use: "detail", place: { topLeft: [0, 0] } }],
+        },
+      },
+    } as any;
+
+    expect(() => resolveGeometry(doc, { mode: "editor" })).toThrowError(expect.objectContaining({
+      code: "INVALID_VALUE",
+      phase: "resolve",
+      path: "sheets.primary.size[0]",
     }));
   });
 });

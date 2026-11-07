@@ -133,6 +133,21 @@ describe("Integration: Intersection → Point placement", () => {
     };
     expect(() => evaluateExpression("intersection(L, C, first)", ctx)).toThrow("NO_INTERSECTION");
   });
+
+  it("normalizes negative intersection selectors as index range errors", () => {
+    const ctx: EvalContext = {
+      scalars: {},
+      targetUnit: "px",
+      objects: {
+        L: { id: "L", type: "line", x1: -20, y1: 0, x2: 20, y2: 0 } as any,
+        C: { id: "C", type: "circle", cx: 0, cy: 0, radius: 10 } as any,
+      },
+    };
+    expect(() => evaluateExpression("intersection(L, C, -1)", ctx))
+      .toThrow("INTERSECTION_INDEX_OUT_OF_RANGE");
+    expect(() => evaluateExpression("intersection(L, C, {index: -1})", ctx))
+      .toThrow("INTERSECTION_INDEX_OUT_OF_RANGE");
+  });
 });
 
 // ─────────────────────────────────────────────

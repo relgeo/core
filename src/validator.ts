@@ -31,6 +31,30 @@ const MIRROR_AXES = new Set(["x", "y", "both"]);
 const REPEAT_ALONG_SPACING = new Set(["uniform-length", "uniform-t", "fixed-distance"]);
 const PATH_LIKE_OBJECT_TYPES = new Set(["line", "arc", "circle", "ellipse", "rect", "quadratic", "cubic", "path", "polygon"]);
 const SPLIT_TARGET_OBJECT_TYPES = new Set(["line", "arc", "quadratic", "cubic", "path"]);
+const REPEAT_CONTEXT_IDENTIFIERS = new Set(["index", "count", "row", "col", "rows", "cols", "item"]);
+
+function containsRepeatContext(value: unknown): boolean {
+  if (typeof value === "string") {
+    const identifiers = value.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
+    return identifiers.some((identifier) => REPEAT_CONTEXT_IDENTIFIERS.has(identifier));
+  }
+  if (Array.isArray(value)) return value.some(containsRepeatContext);
+  if (value && typeof value === "object") return Object.values(value).some(containsRepeatContext);
+  return false;
+}
+
+function manualRepeatPositionField(item: unknown): string | undefined {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+  const candidate = item as Record<string, unknown>;
+  // `on` is intentionally excluded: along items may use on.path/on.frame
+  // with the generated item context. Other positioning fields are only valid
+  // when their value is derived from that context; a literal would override
+  // the path layout and make the repeat contract ambiguous.
+  for (const field of ["place", "at", "center", "from", "to", "through", "points", "segments"]) {
+    if (candidate[field] !== undefined && !containsRepeatContext(candidate[field])) return field;
+  }
+  return undefined;
+}
 // Geometry operations produce geometry objects, not annotations, text, or
 // collection/layout metadata. Keep this boundary explicit so a statically
 // known incompatible target fails before resolver execution.
@@ -47,7 +71,11 @@ const REVERSIBLE_TARGET_TYPES = new Set([
 const SCENE_UNITS = new Set(["mm", "cm", "m", "in", "px"]);
 const SCENE_ORIENTATIONS = new Set(["y-down", "y-up"]);
 const SCENE_ORIGINS = new Set(["top-left", "bottom-left", "center"]);
-const LENGTH_LITERAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:px|mm|cm|m|in)?$/;
+const NUMERIC_PATTERN = `[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?`;
+const NUMERIC_LITERAL = new RegExp(`^${NUMERIC_PATTERN}$`);
+const LENGTH_LITERAL = new RegExp(`^${NUMERIC_PATTERN}(?:px|mm|cm|m|in)?$`);
+const ANGLE_LITERAL = new RegExp(`^${NUMERIC_PATTERN}(?:deg|rad)?$`);
+const PERCENT_LITERAL = new RegExp(`^${NUMERIC_PATTERN}%?$`);
 
 const POINT_RETURNING_ANCHORS: Record<string, Set<string>> = {
   point: new Set(["center"]),
@@ -127,7 +155,11 @@ export class Validator {
   private objectIds: Set<string>;
   private valueIds: Set<string>;
 
-  constructor(private doc: RelGeoDocument, private mode: RelGeoMode = "validate") {
+  constructor(
+    private doc: RelGeoDocument,
+    private mode: RelGeoMode = "validate",
+    private validateComponentDefinitions = true,
+  ) {
     this.doc.objects = this.doc.objects || {};
     this.objectIds = new Set(Object.keys(doc.objects || {}));
     this.valueIds = new Set([
@@ -166,15 +198,19 @@ export class Validator {
     this.validateScene();
     this.validateSheetsAndViews();
 
-    if (this.doc.components) {
+    if (this.validateComponentDefinitions && this.doc.components) {
       for (const [compId, compDef] of Object.entries(this.doc.components)) {
         const compDoc: RelGeoDocument = {
           version: this.doc.version,
           parameters: compDef.parameters || {},
           derived: compDef.derived || {},
           objects: compDef.objects || {},
+          // Keep the component namespace available while validating nested
+          // component references, but do not recurse through every definition
+          // again: the outer pass validates each definition exactly once.
+          components: this.doc.components,
         };
-        const compValidator = new Validator(compDoc, this.mode);
+        const compValidator = new Validator(compDoc, this.mode, false);
         compValidator.knownIds = new Set([...compValidator.knownIds, ...this.knownIds]);
         compValidator.objectIds = new Set([...compValidator.objectIds, ...this.objectIds]);
         compValidator.validate();
@@ -464,14 +500,14 @@ export class Validator {
               if (this.objectIds.has(base)) {
                 const baseObj = this.doc.objects![base];
                 if (String(this.doc.version) === "0.5" && baseObj?.type === "path" && invalidPart === "area" && !this.isEffectivelyClosedPath(baseObj)) {
-                  throw new ValidationError(`Path "${base}" must be closed to expose area`, undefined, "PATH_NOT_CLOSED");
+                  throw new ValidationError(`Path "${base}" must be closed to expose area`, path, "PATH_NOT_CLOSED");
                 }
                 if (baseObj && baseObj.type === "component") {
-                  throw new ValidationError(`Unknown anchor: ${invalidPart} on component ${base}`, undefined, "UNKNOWN_ANCHOR");
+                  throw new ValidationError(`Unknown anchor: ${invalidPart} on component ${base}`, path, "UNKNOWN_ANCHOR");
                 }
-                throw new ValidationError(`Unknown anchor: ${invalidPart} on object ${base}`, undefined, "UNKNOWN_ANCHOR");
+                throw new ValidationError(`Unknown anchor: ${invalidPart} on object ${base}`, path, "UNKNOWN_ANCHOR");
               }
-              throw new ValidationError(`Invalid object reference: ${match}`, undefined, "UNKNOWN_REFERENCE");
+              throw new ValidationError(`Invalid object reference: ${match}`, path, "UNKNOWN_REFERENCE");
             }
           }
         }
@@ -507,13 +543,13 @@ export class Validator {
             }
 
             if (!name.includes(".")) {
-              throw new ValidationError(`Unknown identifier: ${name}`, undefined, "UNKNOWN_IDENTIFIER");
+              throw new ValidationError(`Unknown identifier: ${name}`, path, "UNKNOWN_IDENTIFIER");
             }
             const [base, anchor] = name.split(".");
             if (this.objectIds.has(base)) {
-              throw new ValidationError(`Unknown anchor: ${anchor} on object ${base}`, undefined, "UNKNOWN_ANCHOR");
+              throw new ValidationError(`Unknown anchor: ${anchor} on object ${base}`, path, "UNKNOWN_ANCHOR");
             }
-            throw new ValidationError(`Unknown identifier: ${name}`, undefined, "UNKNOWN_IDENTIFIER");
+            throw new ValidationError(`Unknown identifier: ${name}`, path, "UNKNOWN_IDENTIFIER");
           },
           get: (name: string) => {
             if (this.objectIds.has(name)) {
@@ -567,7 +603,7 @@ export class Validator {
                 if ((type === "path" || type === "boolean") && member === "area" && id) {
                   const rawObj = this.doc.objects![id];
                   if (rawObj && !this.isEffectivelyClosedPath(rawObj)) {
-                    throw new ValidationError("area is only available on closed path", undefined, "PATH_NOT_CLOSED");
+                    throw new ValidationError("area is only available on closed path", path, "PATH_NOT_CLOSED");
                   }
                 }
                 if (POINT_RETURNING_ANCHORS[type]?.has(member)) {
@@ -575,13 +611,13 @@ export class Validator {
                 }
                 return { type: "number" as const, value: 1 };
               }
-              throw new ValidationError(`Unknown anchor: ${member} on object`, undefined, "UNKNOWN_ANCHOR");
+              throw new ValidationError(`Unknown anchor: ${member} on object`, path, "UNKNOWN_ANCHOR");
             }
             if ((obj.type === "point" || (obj.value && obj.value.type === "point"))) {
               if (POINT_COMPONENTS.has(member)) {
                 return { type: "number" as const, value: 1 };
               }
-              throw new ValidationError(`Unknown anchor: ${member} on point`, undefined, "UNKNOWN_ANCHOR");
+              throw new ValidationError(`Unknown anchor: ${member} on point`, path, "UNKNOWN_ANCHOR");
             }
             return { type: "number" as const, value: 1 };
           },
@@ -656,6 +692,26 @@ export class Validator {
           validateExpr(obj.move.distance, `${path}.move.distance`);
           validateExpr(obj.move.x, `${path}.move.x`);
           validateExpr(obj.move.y, `${path}.move.y`);
+
+          const hasAngle = obj.move.angle !== undefined;
+          const hasDistance = obj.move.distance !== undefined;
+          const hasPolar = hasAngle || hasDistance;
+          const hasCartesian = ["left", "right", "up", "down", "x", "y"]
+            .some((key) => obj.move[key] !== undefined);
+          if (hasPolar && (!hasAngle || !hasDistance)) {
+            throw new ValidationError(
+              `point "${id}" polar move requires both "angle" and "distance"`,
+              `${path}.move`,
+              "MISSING_REQUIRED_FIELD",
+            );
+          }
+          if (hasPolar && hasCartesian) {
+            throw new ValidationError(
+              `point "${id}" cannot combine polar and Cartesian move modes`,
+              `${path}.move`,
+              "OVER_CONSTRAINED",
+            );
+          }
         }
         if (obj.on) {
           this.validateOn(obj.on, path, validateExpr);
@@ -691,6 +747,9 @@ export class Validator {
           }
           if (obj.direction !== undefined && !LINE_DIRECTIONS.has(obj.direction)) {
             throw new ValidationError(`Invalid direction: ${obj.direction}. Expected one of: left, right, up, down`, `${path}.direction`, "INVALID_VALUE");
+          }
+          if (typeof obj.length === "number" && (!Number.isFinite(obj.length) || obj.length <= 0)) {
+            throw new ValidationError(`line "${id}" length must be finite and positive`, `${path}.length`, "INVALID_VALUE");
           }
           if (hasTangent) {
             if (!obj.tangent.from || !obj.tangent.to) {
@@ -1298,8 +1357,13 @@ export class Validator {
             }
 
             const itemObj = obj.item as any;
-            if (itemObj && itemObj.place !== undefined) {
-              throw new ValidationError(`item placement is not allowed when along layout is active.`, `${path}.item`, "OVER_CONSTRAINED_REPEAT_LAYOUT");
+            const manualPositionField = manualRepeatPositionField(itemObj);
+            if (manualPositionField) {
+              throw new ValidationError(
+                `item ${manualPositionField} must be derived from repeat context when along layout is active.`,
+                `${path}.item.${manualPositionField}`,
+                "OVER_CONSTRAINED_REPEAT_LAYOUT",
+              );
             }
           }
         }
@@ -1548,6 +1612,21 @@ export class Validator {
       throw new ValidationError(`"on.${namespace}" must be an object`, `${path}.on.${namespace}`, "INVALID_TYPE");
     }
 
+    const allowedFields = namespace === "point"
+      ? new Set(["at", "anchor"])
+      : new Set(["path", "t", "anchor"]);
+    if (this.mode !== "editor") {
+      for (const field of Object.keys(spec)) {
+        if (!allowedFields.has(field)) {
+          throw new ValidationError(
+            `Unknown on.${namespace} field: ${field}`,
+            `${path}.on.${namespace}.${field}`,
+            "UNKNOWN_FIELD",
+          );
+        }
+      }
+    }
+
     if (namespace === "point") {
       if (spec.at === undefined) throw new ValidationError(`"at" is required in "on.point"`, `${path}.on.point.at`, "MISSING_REQUIRED_FIELD");
       validateExpr(spec.at, `${path}.on.point.at`);
@@ -1662,17 +1741,42 @@ export class Validator {
         const path = `constraints[${i}]`;
         if ("equal" in c) {
           const args = c.equal;
+          const validateEqualExpression = (value: unknown, expressionPath: string) => {
+            const expression = String(value);
+            validateExpressionSyntax(expression);
+
+            // Equal constraints are expressions rather than bare object IDs, so
+            // they do not use the reference checks below for parallel/tangent.
+            // Still reject dotted object references that are structurally known
+            // to be missing; otherwise a typo survives validation and becomes a
+            // later evaluator failure with no stable constraint path.
+            const matches = expression.match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)/g) || [];
+            for (const match of matches) {
+              const base = match.split(".")[0];
+              if (this.objectIds.has(base)) {
+                if (!this.isValidObjectReference(match)) {
+                  throw new ValidationError(
+                    `Unknown anchor: ${match.split(".")[1]} on object ${base}`,
+                    expressionPath,
+                    "UNKNOWN_ANCHOR",
+                  );
+                }
+              } else if (!this.knownIds.has(base)) {
+                throw new ValidationError(`Unknown reference "${base}"`, expressionPath, "UNKNOWN_REFERENCE");
+              }
+            }
+          };
           if (Array.isArray(args)) {
             if (args.length < 2) {
               throw new ValidationError(`"equal" constraint requires at least 2 arguments`, path);
             }
-            args.forEach(arg => validateExpressionSyntax(String(arg)));
+            args.forEach((arg, j) => validateEqualExpression(arg, `${path}.equal[${j}]`));
           } else if (args && typeof args === "object") {
             if ((args as any).left === undefined || (args as any).right === undefined) {
               throw new ValidationError(`"equal" object-form requires "left" and "right"`, path, "MISSING_REQUIRED_FIELD");
             }
-            validateExpressionSyntax(String((args as any).left));
-            validateExpressionSyntax(String((args as any).right));
+            validateEqualExpression((args as any).left, `${path}.equal.left`);
+            validateEqualExpression((args as any).right, `${path}.equal.right`);
           } else {
             throw new ValidationError(`"equal" constraint must be an array or object-form`, path, "INVALID_VALUE");
           }
@@ -2022,6 +2126,25 @@ export class Validator {
   private validateValueType(val: any, type: string, path: string): void {
     if (val === null || val === undefined) return;
 
+    const isLength = (value: unknown): boolean =>
+      typeof value === "number" || (typeof value === "string" && LENGTH_LITERAL.test(value));
+    const validatePointValue = (value: unknown, valuePath: string, label: string): void => {
+      if (!Array.isArray(value) || value.length !== 2) {
+        throw new ValidationError(`${label} must be an array of exactly 2 coordinates, got: ${JSON.stringify(value)}`, valuePath, "TYPE_MISMATCH");
+      }
+      value.forEach((coordinate, index) => {
+        if (!isLength(coordinate)) {
+          throw new ValidationError(`Coordinate at index ${index} must be a valid length, got: ${JSON.stringify(coordinate)}`, `${valuePath}[${index}]`, "TYPE_MISMATCH");
+        }
+      });
+    };
+    const validateRecord = (value: unknown, valuePath: string, label: string): Record<string, unknown> => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new ValidationError(`${label} must be an object, got: ${JSON.stringify(value)}`, valuePath, "TYPE_MISMATCH");
+      }
+      return value as Record<string, unknown>;
+    };
+
     switch (type) {
       case "boolean":
         if (typeof val !== "boolean" && val !== "true" && val !== "false") {
@@ -2029,11 +2152,10 @@ export class Validator {
         }
         break;
       case "number":
-        if (typeof val !== "number") {
-          const num = parseFloat(String(val));
-          if (isNaN(num)) {
-            throw new ValidationError(`Value must be a number, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
-          }
+        if (
+          typeof val !== "number" && (typeof val !== "string" || !NUMERIC_LITERAL.test(val))
+        ) {
+          throw new ValidationError(`Value must be a number, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
         }
         break;
       case "length":
@@ -2048,7 +2170,7 @@ export class Validator {
       case "angle":
         if (typeof val !== "number") {
           const str = String(val);
-          const hasUnit = /^[+-]?([\d.]+)(deg|rad)?$/.test(str);
+          const hasUnit = ANGLE_LITERAL.test(str);
           if (!hasUnit) {
             throw new ValidationError(`Value must be a valid angle (e.g. 90deg, 1.5rad), got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
           }
@@ -2057,7 +2179,7 @@ export class Validator {
       case "percent":
         if (typeof val !== "number") {
           const str = String(val);
-          const hasUnit = /^[+-]?([\d.]+)%?$/.test(str);
+          const hasUnit = PERCENT_LITERAL.test(str);
           if (!hasUnit) {
             throw new ValidationError(`Value must be a valid percentage (e.g. 50%), got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
           }
@@ -2065,18 +2187,7 @@ export class Validator {
         break;
       case "point":
       case "vector":
-        if (!Array.isArray(val) || val.length !== 2) {
-          throw new ValidationError(`Value must be an array of exactly 2 coordinates, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
-        }
-        val.forEach((coord, i) => {
-          if (typeof coord !== "number") {
-            const str = String(coord);
-            const hasUnit = LENGTH_LITERAL.test(str);
-            if (!hasUnit) {
-              throw new ValidationError(`Coordinate at index ${i} must be a valid length, got: ${JSON.stringify(coord)}`, `${path}[${i}]`, "TYPE_MISMATCH");
-            }
-          }
-        });
+        validatePointValue(val, path, "Value");
         break;
       case "array":
         if (!Array.isArray(val)) {
@@ -2091,6 +2202,55 @@ export class Validator {
       case "string":
         if (typeof val !== "string") {
           throw new ValidationError(`Value must be a string, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
+        }
+        break;
+      case "enum":
+        if (typeof val !== "string") {
+          throw new ValidationError(`Value must be one of the declared enum options, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
+        }
+        break;
+      case "frame2d": {
+        const frame = validateRecord(val, path, "frame2d value");
+        if (!("point" in frame)) {
+          throw new ValidationError("frame2d value must contain point", `${path}.point`, "MISSING_REQUIRED_FIELD");
+        }
+        if (!("angle" in frame)) {
+          throw new ValidationError("frame2d value must contain angle", `${path}.angle`, "MISSING_REQUIRED_FIELD");
+        }
+        validatePointValue(frame.point, `${path}.point`, "frame2d point");
+        if (!isLength(frame.angle) && !(typeof frame.angle === "string" && ANGLE_LITERAL.test(frame.angle))) {
+          throw new ValidationError(`frame2d angle must be a valid angle, got: ${JSON.stringify(frame.angle)}`, `${path}.angle`, "TYPE_MISMATCH");
+        }
+        for (const field of ["tangent", "normal"]) {
+          if (field in frame) validatePointValue(frame[field], `${path}.${field}`, `frame2d ${field}`);
+        }
+        break;
+      }
+      case "bbox2d": {
+        const bbox = validateRecord(val, path, "bbox2d value");
+        for (const field of ["minX", "maxX", "minY", "maxY", "width", "height"]) {
+          if (!(field in bbox)) {
+            throw new ValidationError(`bbox2d value must contain ${field}`, `${path}.${field}`, "MISSING_REQUIRED_FIELD");
+          }
+          if (!isLength(bbox[field])) {
+            throw new ValidationError(`bbox2d ${field} must be a valid length, got: ${JSON.stringify(bbox[field])}`, `${path}.${field}`, "TYPE_MISMATCH");
+          }
+        }
+        break;
+      }
+      case "collection": {
+        const collection = validateRecord(val, path, "collection value");
+        if (collection.type !== "collection") {
+          throw new ValidationError(`collection value must have type \"collection\", got: ${JSON.stringify(collection.type)}`, `${path}.type`, "TYPE_MISMATCH");
+        }
+        if (!Array.isArray(collection.children)) {
+          throw new ValidationError("collection value must contain a children array", `${path}.children`, "TYPE_MISMATCH");
+        }
+        break;
+      }
+      case "path-ref":
+        if (typeof val !== "string" || val.trim().length === 0) {
+          throw new ValidationError(`path-ref value must be a non-empty object reference, got: ${JSON.stringify(val)}`, path, "TYPE_MISMATCH");
         }
         break;
     }

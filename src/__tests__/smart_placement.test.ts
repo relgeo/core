@@ -75,7 +75,7 @@ describe("Smart Placement & Custom Anchors", () => {
         expect(obj.transform[0].y).toBe(300);
     });
 
-    it("should transform (rotate) component around its custom anchor origin", () => {
+  it("should transform (rotate) component around its custom anchor origin", () => {
         const doc: RelGeoDocument = {
             version: 0.4,
             scene: { unit: "px" },
@@ -114,6 +114,23 @@ describe("Smart Placement & Custom Anchors", () => {
         expect(obj.transform[1].origin).toBeDefined();
         expect(obj.transform[1].origin.x).toBe(0);
         expect(obj.transform[1].origin.y).toBe(12);
+    });
+
+    it("rejects an unknown on-placement anchor instead of silently using center", () => {
+        const doc: RelGeoDocument = {
+            version: 0.5,
+            scene: { unit: "px" },
+            objects: {
+                target: { type: "point", at: [10, 10] },
+                marker: {
+                    type: "rect",
+                    size: [4, 4],
+                    on: { point: { at: "target", anchor: "notAnAnchor" } },
+                } as any,
+            },
+        };
+
+        expect(() => resolveGeometry(doc)).toThrow(/UNKNOWN_ANCHOR/);
     });
 
 });

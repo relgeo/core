@@ -6,6 +6,7 @@ import { normalizeErrorCode, stripErrorCodePrefix } from "../errors";
 import { createEvalContext } from "./eval-context";
 import { calculateBoundingBox } from "./geometry-utils";
 import type { AnchorRef } from "../types";
+import { addCurveEnvelopePoints } from "./curve-bounds";
 
 function bboxFromPoints(points: { x: number; y: number }[]) {
     const xs = points.map((p) => p.x);
@@ -221,20 +222,16 @@ function bboxFromSegments(segments: any[]) {
         }
 
         if (segment.type === "quadratic") {
-            points.push(
-                { x: segment.x1, y: segment.y1 },
-                { x: segment.cpx, y: segment.cpy },
-                { x: segment.x2, y: segment.y2 }
-            );
+            addCurveEnvelopePoints(points, segment);
             return;
         }
 
-        points.push(
-            { x: segment.x1, y: segment.y1 },
-            { x: segment.cp1x, y: segment.cp1y },
-            { x: segment.cp2x, y: segment.cp2y },
-            { x: segment.x2, y: segment.y2 }
-        );
+        if (segment.type === "cubic") {
+            addCurveEnvelopePoints(points, segment);
+            return;
+        }
+
+        points.push({ x: segment.x1, y: segment.y1 }, { x: segment.x2, y: segment.y2 });
     });
 
     return bboxFromPoints(points);

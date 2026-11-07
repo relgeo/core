@@ -129,6 +129,43 @@ objects: {}
     expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
   });
 
+  it("should reject malformed numeric, angle, and percentage literals without truncation", () => {
+    for (const [type, value] of [
+      ["number", "10mm"],
+      ["number", "10abc"],
+      ["angle", "10..5deg"],
+      ["percent", "10..5%"],
+    ] as const) {
+      const yaml = `
+version: 0.5
+parameters:
+  value:
+    type: ${type}
+    default: ${value}
+objects: {}
+`;
+      expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+        code: "TYPE_MISMATCH",
+        path: "parameters.value.default",
+      }));
+    }
+  });
+
+  it("accepts exponent-form numeric and length defaults", () => {
+    const yaml = `
+version: 0.5
+parameters:
+  count:
+    type: number
+    default: 1e2
+  spacing:
+    type: length
+    default: 1e2mm
+objects: {}
+`;
+    expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
+  });
+
   it("should reject invalid point structures", () => {
     const yaml = `
 version: 0.4
@@ -255,5 +292,61 @@ profiles:
 objects: {}
 `;
     expect(() => parseRelGeo(yaml, { mode: "validate" })).not.toThrow();
+  });
+
+  it("enforces the v0.5 structured type shapes", () => {
+    const validYaml = `
+version: 0.5
+parameters:
+  frame:
+    type: frame2d
+    default:
+      point: [10mm, 20mm]
+      angle: 90deg
+      tangent: [1, 0]
+      normal: [0, 1]
+  bounds:
+    type: bbox2d
+    default:
+      minX: 0
+      maxX: 20mm
+      minY: 0
+      maxY: 10mm
+      width: 20mm
+      height: 10mm
+  items:
+    type: collection
+    default:
+      type: collection
+      children: [first, second]
+  path:
+    type: path-ref
+    default: outline
+objects: {}
+`;
+    expect(() => parseRelGeo(validYaml, { mode: "validate" })).not.toThrow();
+
+    const invalidCases = [
+      ["frame2d", "point: [10mm]\n      angle: 0deg"],
+      ["bbox2d", "minX: 0\n      maxX: 10\n      minY: 0\n      maxY: 10\n      width: 10"],
+      ["collection", "type: collection"],
+      ["path-ref", "[outline]"],
+    ] as const;
+
+    for (const [type, value] of invalidCases) {
+      const yaml = `
+version: 0.5
+parameters:
+  value:
+    type: ${type}
+    default:
+      ${value}
+objects: {}
+`;
+      expect(() => parseRelGeo(yaml, { mode: "validate" })).toThrowError(expect.objectContaining({
+        code: expect.any(String),
+        path: expect.stringMatching(/^parameters\.value(?:\.|$)/),
+      }));
+    }
   });
 });

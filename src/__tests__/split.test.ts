@@ -120,6 +120,29 @@ objects:
     expect((resolved.values as any).tailStartX).toBeCloseTo(4);
   });
 
+  it("exposes split collection cardinality and stable indexed children", () => {
+    const resolved = resolveGeometry({
+      version: 0.5,
+      derived: {
+        pieces: "count(cut)",
+        firstStart: "pointAt(first(cut), 0).x",
+        lastEnd: "pointAt(last(cut), 1).x",
+        indexedEnd: "pointAt(cut[1], 1).x",
+      },
+      objects: {
+        edge: { type: "line", from: [0, 0], to: [10, 0] },
+        cut: { type: "split", target: "edge", at: [4, 0] },
+      },
+    } as any);
+
+    expect((resolved.values as any).pieces).toBe(2);
+    expect((resolved.values as any).firstStart).toBeCloseTo(0);
+    expect((resolved.values as any).lastEnd).toBeCloseTo(10);
+    expect((resolved.values as any).indexedEnd).toBeCloseTo(10);
+    expect(resolved.objects["cut[0]"]).toBeDefined();
+    expect(resolved.objects["cut[1]"]).toBeDefined();
+  });
+
   it("rejects split at line start as DEGENERATE_SPLIT", () => {
     expect(() =>
       resolveGeometry({

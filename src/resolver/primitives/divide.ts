@@ -2,6 +2,7 @@ import { DivideObject, ResolvedObject } from "../../types";
 import { evaluateExpression } from "../../evaluator";
 import { createEvalContext } from "../eval-context";
 import { ResolveContext, ResolveError } from "../types";
+import { normalizeErrorCode, stripErrorCodePrefix } from "../../errors";
 
 export function resolveDivide(
     id: string,
@@ -12,7 +13,17 @@ export function resolveDivide(
     
     let countVal = obj.count;
     if (typeof countVal === "string") {
-        countVal = evaluateExpression(countVal, evalCtx);
+        try {
+            countVal = evaluateExpression(countVal, evalCtx);
+        } catch (error: any) {
+            const message = stripErrorCodePrefix(error instanceof Error ? error.message : String(error));
+            throw new ResolveError(
+                message,
+                normalizeErrorCode(error?.code, message, "INVALID_VALUE"),
+                id,
+                `objects.${id}.count`,
+            );
+        }
     }
     const count = Number(countVal);
     

@@ -9,6 +9,7 @@ import { calculateBoundingBox } from "../geometry-utils";
 import { applyObjectPlacementAndTransform } from "./utils";
 import { resolveStructuredInherit } from "../inherit";
 import { sortNodes } from "../../graph";
+import { normalizeErrorCode, stripErrorCodePrefix } from "../../errors";
 
 function componentParameterExpression(value: unknown): unknown {
     if (value && typeof value === "object" && !Array.isArray(value) && "default" in (value as any)) {
@@ -21,17 +22,25 @@ function evaluateComponentParameter(
     value: unknown,
     evalCtx: ReturnType<typeof createEvalContext>,
     parameterType?: string,
+    objectId?: string,
+    path?: string,
 ): unknown {
     if (typeof value !== "string") return value;
     if (parameterType === "string" || parameterType === "enum") return value;
     try {
         return evaluateExpression(value, evalCtx);
-    } catch (error) {
+    } catch (error: any) {
         // Untyped shorthand parameters may be string literals. Typed numeric
         // and geometric parameters must surface expression failures instead of
         // deferring an invalid value to a later object resolution.
         if (parameterType === undefined) return value;
-        throw error;
+        const message = stripErrorCodePrefix(error instanceof Error ? error.message : String(error));
+        throw new ResolveError(
+            message,
+            normalizeErrorCode(error?.code, message, "INVALID_VALUE"),
+            objectId,
+            path,
+        );
     }
 }
 
@@ -88,7 +97,7 @@ export function resolveComponent(
                 ...ctx,
                 scalars: { ...ctx.scalars, ...localScalars },
             });
-            localScalars[pName] = evaluateComponentParameter(value, parameterEvalCtx, parameterType);
+            localScalars[pName] = evaluateComponentParameter(value, parameterEvalCtx, parameterType, id, `objects.${id}.params.${pName}`);
         }
     }
 
@@ -107,7 +116,7 @@ export function resolveComponent(
                 ...ctx,
                 scalars: { ...ctx.scalars, ...localScalars },
             });
-            const evaluated = evaluateComponentParameter(pVal, inheritedEvalCtx, parameterType);
+            const evaluated = evaluateComponentParameter(pVal, inheritedEvalCtx, parameterType, id, `objects.${id}.params.inherit.${pName}`);
             localScalars[pName] = evaluated;
             effectiveValues.set(pName, pVal);
         }
@@ -122,7 +131,7 @@ export function resolveComponent(
                 ...ctx,
                 scalars: { ...ctx.scalars, ...localScalars },
             });
-            const evaluated = evaluateComponentParameter(pVal, localParamEvalCtx, parameterType);
+            const evaluated = evaluateComponentParameter(pVal, localParamEvalCtx, parameterType, id, `objects.${id}.params.${pName}`);
             localScalars[pName] = evaluated;
             effectiveValues.set(pName, pVal);
         }
@@ -144,7 +153,7 @@ export function resolveComponent(
                 ...ctx,
                 scalars: { ...ctx.scalars, ...localScalars },
             });
-            localScalars[pName] = evaluateComponentParameter(value, orderedEvalCtx, parameterType);
+            localScalars[pName] = evaluateComponentParameter(value, orderedEvalCtx, parameterType, id, `objects.${id}.params.${pName}`);
         }
     }
 

@@ -189,6 +189,49 @@ describe("v0.4: Reusable Component System (Phase C)", () => {
     expect(() => invalidValidator.validate()).toThrow();
   });
 
+  it("validates and resolves nested component exports without leaking private members", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      components: {
+        leaf: {
+          exports: { center: "body.center" },
+          objects: {
+            body: { type: "rect", size: [10, 10] } as any,
+          },
+        },
+        shell: {
+          objects: {
+            inner: { type: "component", use: "leaf" } as any,
+          },
+          exports: { center: "inner.center" },
+        },
+      },
+      objects: {
+        instance: { type: "component", use: "shell" } as any,
+        marker: { type: "point", at: "instance.center" } as any,
+      },
+    };
+
+    expect(() => new Validator(doc).validate()).not.toThrow();
+    const scene = resolveGeometry(doc);
+    expect(scene.objects["instance.inner"]).toMatchObject({
+      type: "component",
+      use: "leaf",
+      hasExports: true,
+    });
+    expect(scene.objects.marker).toMatchObject({ x: 5, y: 5 });
+
+    const privateReference = {
+      ...doc,
+      objects: {
+        instance: { type: "component", use: "shell" } as any,
+        invalid: { type: "point", at: "instance.inner.body.center" } as any,
+      },
+    };
+    expect(() => new Validator(privateReference).validate()).toThrow();
+  });
+
   it("supports fallback to inner objects when no exports block is defined", () => {
     const doc: RelGeoDocument = {
       version: 0.4,

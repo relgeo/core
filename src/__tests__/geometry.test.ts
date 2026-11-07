@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { resolveGeometry } from "../resolver";
 import type { RelGeoDocument, ResolvedRect, ResolvedPoint, ResolvedLine, ResolvedArc, ResolvedQuadratic, ResolvedCubic, ResolvedPath, ResolvedPolygon } from "../types";
 import { calculateBoundingBox } from "../resolver/geometry-utils";
+import { getAnchorValue } from "../resolver/anchors";
+import { Validator } from "../validator";
 
 describe("resolver geometry", () => {
   it("should resolve a root rect at origin", () => {
@@ -159,6 +161,24 @@ describe("resolver geometry", () => {
     expect(box.y).toBe(15);
   });
 
+  it("requires complete polar point movement and rejects mixed movement modes", () => {
+    const incompletePolar = {
+      version: 0.5,
+      objects: {
+        p: { type: "point", from: [0, 0], move: { angle: "45deg" } },
+      },
+    } as any;
+    expect(() => new Validator(incompletePolar).validate()).toThrow(/MISSING_REQUIRED_FIELD/);
+
+    const mixedModes = {
+      version: 0.5,
+      objects: {
+        p: { type: "point", from: [0, 0], move: { angle: "45deg", distance: 10, right: 2 } },
+      },
+    } as any;
+    expect(() => new Validator(mixedModes).validate()).toThrow(/OVER_CONSTRAINED/);
+  });
+
   it("should resolve lines (from-to, direction+length)", () => {
     const doc: RelGeoDocument = {
       version: 0.1,
@@ -225,6 +245,95 @@ describe("resolver geometry", () => {
         } as any,
       },
     })).toThrow(/INVALID_VALUE/);
+  });
+
+  it("rejects degenerate closed-shape dimensions before publishing a scene", () => {
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        flatRect: { type: "rect", size: [0, 10] } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      objectId: "flatRect",
+      path: "size",
+    }));
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        negativeCircle: { type: "circle", center: [0, 0], radius: -1 } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      objectId: "negativeCircle",
+      path: "radius",
+    }));
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        zeroThroughCircle: { type: "circle", center: [0, 0], through: [0, 0] } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      objectId: "zeroThroughCircle",
+      path: "radius",
+    }));
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        flatEllipse: { type: "ellipse", center: [0, 0], rx: 0, ry: 10 } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "ELLIPSE_INVALID_RADIUS",
+      objectId: "flatEllipse",
+      path: "radius",
+    }));
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        flatArc: {
+          type: "arc",
+          center: [0, 0],
+          radius: 0,
+          startAngle: 0,
+          endAngle: Math.PI / 2,
+        } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "DEGENERATE_ARC",
+      objectId: "flatArc",
+      path: "radius",
+    }));
+  });
+
+  it("rejects non-positive direction-length line modes with field context", () => {
+    expect(() => resolveGeometry({
+      version: 0.5,
+      objects: {
+        degenerateLine: { type: "line", from: [0, 0], direction: "right", length: 0 } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      path: "objects.degenerateLine.length",
+    }));
+
+    expect(() => resolveGeometry({
+      version: 0.5,
+      parameters: {
+        zeroLength: { type: "number", default: 0 },
+      },
+      objects: {
+        degenerateLine: { type: "line", from: [0, 0], direction: "right", length: "zeroLength" } as any,
+      },
+    })).toThrow(expect.objectContaining({
+      code: "INVALID_VALUE",
+      objectId: "degenerateLine",
+      path: "length",
+    }));
   });
 
   it("should throw on circular dependency between objects", () => {
@@ -848,6 +957,26 @@ describe("resolver geometry", () => {
     const res = resolveGeometry(doc);
     const marker = res.objects.marker as ResolvedPoint;
     expect(marker.x).toBeCloseTo(50, 0);
+  });
+
+  it("should use the curve envelope, not control points, for segmented path anchors", () => {
+    const path = {
+      id: "segmented",
+      type: "path",
+      closed: false,
+      segments: [{
+        type: "quadratic",
+        x1: 0,
+        y1: 0,
+        cpx: 10,
+        cpy: 100,
+        x2: 20,
+        y2: 0,
+      }],
+    };
+
+    expect(getAnchorValue(path, "bottom")).toBeCloseTo(50, 1);
+    expect(getAnchorValue(path, "centerY")).toBeCloseTo(25, 1);
   });
 
   it("should use sampled curve bounds in group bbox calculations", () => {

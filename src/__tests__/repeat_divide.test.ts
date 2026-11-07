@@ -185,6 +185,32 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
     expect(c12.cy).toBe(25);
   });
 
+  it("preserves grid row/col context and stable coordinate child identity", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        marks: {
+          type: "repeat",
+          grid: { rows: 2, cols: 2 },
+          item: {
+            type: "point",
+            at: ["col * 10", "row * 20"]
+          } as any
+        } as any
+      }
+    };
+
+    const scene = resolveGeometry(doc, { textMetrics: mockTextMetrics });
+    const marks = scene.objects.marks as any;
+
+    expect(marks.children).toEqual(["marks[0,0]", "marks[0,1]", "marks[1,0]", "marks[1,1]"]);
+    expect(scene.objects["marks[0,0]"]).toMatchObject({ x: 0, y: 0 });
+    expect(scene.objects["marks[0,1]"]).toMatchObject({ x: 10, y: 0 });
+    expect(scene.objects["marks[1,0]"]).toMatchObject({ x: 0, y: 20 });
+    expect(scene.objects["marks[1,1]"]).toMatchObject({ x: 10, y: 20 });
+  });
+
   it("handles polar repeat around center with custom anchors and relative center binding", () => {
     const doc: RelGeoDocument = {
       version: 0.4,
@@ -395,7 +421,7 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
           },
           item: {
             type: "circle",
-            radius: "(row + col) * 10"
+            radius: "(row + col + 1) * 10"
           } as any
         } as any,
         targetVentRadius: {
@@ -407,7 +433,7 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
 
     const scene = resolveGeometry(doc, { textMetrics: mockTextMetrics });
     const p = scene.objects.targetVentRadius as any;
-    expect(p.x).toBe(30);
+    expect(p.x).toBe(40);
   });
 
   it("throws INVALID_COLLECTION_ACCESS when index is out of bounds", () => {
@@ -432,6 +458,26 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
     };
 
     expect(() => resolveGeometry(doc, { textMetrics: mockTextMetrics })).toThrow("INVALID_COLLECTION_ACCESS");
+  });
+
+  it("rejects fractional, negative, and non-finite collection indices deterministically", () => {
+    const makeDoc = (index: string): RelGeoDocument => ({
+      version: 0.5,
+      scene: { unit: "px" },
+      objects: {
+        holes: {
+          type: "repeat",
+          count: 2,
+          item: { type: "circle", radius: 5 } as any,
+        } as any,
+        point: { type: "point", at: [`holes[${index}].radius`, 10] } as any,
+      },
+    });
+
+    for (const index of ["0.5", "-1"]) {
+      expect(() => resolveGeometry(makeDoc(index), { textMetrics: mockTextMetrics }))
+        .toThrow("INVALID_COLLECTION_ACCESS");
+    }
   });
 
   it("throws INVALID_REPEAT_COUNT for invalid repeat counts dynamically", () => {
@@ -721,6 +767,37 @@ describe("v0.4: Repeat & Divide System (Phase B)", () => {
 
     const validator = new Validator(doc);
     expect(() => validator.validate()).toThrow("INVALID_REPEAT_ALONG_SPACING");
+  });
+
+  it("rejects literal along-item positioning but permits repeat-context positioning", () => {
+    const literalPosition = {
+      version: 0.5,
+      objects: {
+        guide: { type: "line", from: [0, 0], to: [100, 0] },
+        marks: {
+          type: "repeat",
+          along: { target: "guide", count: 2, spacing: "uniform-length" },
+          item: { type: "point", at: [10, 0] },
+        },
+      },
+    } as any;
+
+    expect(() => new Validator(literalPosition).validate()).toThrowError(expect.objectContaining({
+      code: "OVER_CONSTRAINED_REPEAT_LAYOUT",
+      path: "objects.marks.item.at",
+    }));
+
+    const contextPosition = {
+      ...literalPosition,
+      objects: {
+        ...literalPosition.objects,
+        marks: {
+          ...literalPosition.objects.marks,
+          item: { type: "point", at: "item.point" },
+        },
+      },
+    };
+    expect(() => new Validator(contextPosition).validate()).not.toThrow();
   });
 
   it("rejects negative along offsets at resolve time", () => {

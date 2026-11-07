@@ -76,6 +76,25 @@ describe("evaluator", () => {
     expect(() => evaluateExpression("10cm ** 2", ctx)).toThrow("Invalid token: *");
   });
 
+  it("enforces the v0.5 narrow numeric coercion contract", () => {
+    expect(evaluateExpression("10cm + 5mm", ctx)).toBeCloseTo(10.5, 8);
+    expect(evaluateExpression("2 * 10cm", ctx)).toBeCloseTo(20, 8);
+    expect(evaluateExpression("10cm / 2", ctx)).toBeCloseTo(5, 8);
+    expect(evaluateExpression("10cm + 2", ctx)).toBeCloseTo(12, 8);
+    expect(() => evaluateExpression("10cm + \"x\"", ctx)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      phase: "resolve",
+    }));
+    expect(() => evaluateExpression("10cm * 5cm", ctx)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      phase: "resolve",
+    }));
+    expect(() => evaluateExpression("2 / 10cm", ctx)).toThrowError(expect.objectContaining({
+      code: "TYPE_MISMATCH",
+      phase: "resolve",
+    }));
+  });
+
   it("should handle rounding functions", () => {
     expect(evaluateExpression("round(10.5)", ctx)).toBe(11);
     expect(evaluateExpression("floor(10.9)", ctx)).toBe(10);

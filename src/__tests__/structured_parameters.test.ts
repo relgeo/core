@@ -116,4 +116,28 @@ describe("v0.4: Structured Parameters & Constants (Phase A)", () => {
     expect(scalars.boltPattern.diameter).toBe(15); // Overridden value
     expect(scalars.boltPattern.spacing).toBeCloseTo(20 * (96 / 25.4)); // Default normalized
   });
+
+  it("applies a selected profile before target-unit normalization", () => {
+    const doc: RelGeoDocument = {
+      version: 0.5,
+      scene: { unit: "cm" },
+      parameters: {
+        width: { type: "length" as any, default: "10mm" },
+        inset: { type: "length" as any, default: "2mm" },
+      },
+      constants: { gap: "1mm" },
+      profiles: {
+        compact: { width: "2cm", inset: "5mm" },
+      },
+      derived: { total: "width + inset + gap" },
+      objects: {},
+    };
+
+    const scalars = resolveValues(doc, { profile: "compact", targetUnit: "cm" });
+
+    expect(scalars.width).toBeCloseTo(2, 8);
+    expect(scalars.inset).toBeCloseTo(0.5, 8);
+    expect(scalars.gap).toBeCloseTo(0.1, 8);
+    expect(scalars.total).toBeCloseTo(2.6, 8);
+  });
 });

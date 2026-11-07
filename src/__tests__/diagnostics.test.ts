@@ -136,6 +136,36 @@ objects:
     });
   });
 
+  it("sanitizes malformed compatible errors at the public boundary", () => {
+    const diagnostic = toDiagnostic(Object.assign(new Error("INTERNAL_CODE: unsafe detail"), {
+      code: "INTERNAL_CODE",
+      phase: "host",
+      severity: "fatal",
+      path: "objects.panel",
+    }), { phase: "resolve" });
+
+    expect(diagnostic).toMatchObject({
+      code: "UNKNOWN_ERROR",
+      phase: "resolve",
+      severity: "error",
+      message: "unsafe detail",
+      path: "objects.panel",
+    });
+    expect(["parse", "validate", "resolve", "runtime", "constraint"]).toContain(diagnostic.phase);
+    expect(["error", "warning", "info"]).toContain(diagnostic.severity);
+  });
+
+  it("uses a safe message for structured non-Error failures", () => {
+    expect(toDiagnostic({ code: "UNKNOWN_INTERNAL", message: "UNKNOWN_INTERNAL: callback failed" }, {
+      phase: "runtime",
+    })).toMatchObject({
+      code: "UNKNOWN_ERROR",
+      phase: "runtime",
+      severity: "error",
+      message: "callback failed",
+    });
+  });
+
   it("aggregates independent boundary failures with deterministic dedupe and truncation", () => {
     const diagnostics = aggregateDiagnostics([
       new Error("Unknown identifier: second"),
@@ -326,6 +356,38 @@ objects:
       "MISSING_REQUIRED_FIELD",
       "UNKNOWN_FIELD",
     ]);
+  });
+
+  it("deduplicates only diagnostics with the same public identity", () => {
+    const diagnostics = sortDiagnostics([
+      {
+        code: "UNKNOWN_REFERENCE",
+        message: "missing",
+        phase: "resolve",
+        severity: "error",
+        path: "objects.first.target",
+        objectId: "first",
+      },
+      {
+        code: "UNKNOWN_REFERENCE",
+        message: "missing",
+        phase: "resolve",
+        severity: "error",
+        path: "objects.first.target",
+        objectId: "second",
+      },
+      {
+        code: "UNKNOWN_REFERENCE",
+        message: "missing",
+        phase: "resolve",
+        severity: "error",
+        path: "objects.first.target",
+        objectId: "first",
+      },
+    ]);
+
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.map(({ objectId }) => objectId)).toEqual(["first", "second"]);
   });
 
   it("applies diagnostic truncation after deterministic ordering", () => {
